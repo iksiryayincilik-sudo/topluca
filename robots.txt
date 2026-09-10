@@ -1,5 +1,6 @@
 User-agent: *
 Disallow: /webyonet/
 Disallow: /app/
-Disallow: /config.php
+Disallow: /includes/
+Disallow: /install.php
 Allow: /

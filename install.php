@@ -4,74 +4,87 @@ declare(strict_types=1);
 error_reporting(E_ALL);
 ini_set('display_errors','1');
 
-$lock=__DIR__.'/.installed';
-if(file_exists($lock)) exit('TOPLUCA zaten kurulmuş. Güvenlik için install.php dosyasını silin.');
+session_name('TOPLUCAINSTALL');
+session_start();
 
-function hh(string $v): string { return htmlspecialchars($v,ENT_QUOTES,'UTF-8'); }
-function slug(string $t): string {
-    $t=strtr($t,['ş'=>'s','Ş'=>'s','ı'=>'i','İ'=>'i','ğ'=>'g','Ğ'=>'g','ü'=>'u','Ü'=>'u','ö'=>'o','Ö'=>'o','ç'=>'c','Ç'=>'c']);
-    $t=strtolower($t); $t=preg_replace('~[^a-z0-9]+~','-',$t); return trim((string)$t,'-');
+function ih(mixed $v): string { return htmlspecialchars((string)$v,ENT_QUOTES|ENT_SUBSTITUTE,'UTF-8'); }
+function topluca_slug(string $text): string {
+    $text=strtr($text,['ş'=>'s','Ş'=>'s','ı'=>'i','İ'=>'i','ğ'=>'g','Ğ'=>'g','ü'=>'u','Ü'=>'u','ö'=>'o','Ö'=>'o','ç'=>'c','Ç'=>'c']);
+    $text=mb_strtolower($text,'UTF-8');$text=preg_replace('~[^a-z0-9]+~u','-',$text);return trim((string)$text,'-');
+}
+function make_pdo(array $db): PDO {
+    return new PDO("mysql:host={$db['host']};port={$db['port']};dbname={$db['name']};charset=utf8mb4",$db['user'],$db['pass'],[
+        PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC,PDO::ATTR_EMULATE_PREPARES=>false
+    ]);
 }
 
-$errors=[];$ok=false;
+$root=__DIR__;$configPath=$root.'/config.php';$lockPath=$root.'/.topluca-installed';
+$existingConfig=is_file($configPath)?require $configPath:null;
+$checks=[
+    'PHP 8.1+'=>version_compare(PHP_VERSION,'8.1.0','>='),
+    'PDO'=>extension_loaded('pdo'),
+    'PDO MySQL'=>extension_loaded('pdo_mysql'),
+    'mbstring'=>extension_loaded('mbstring'),
+    'uploads yazılabilir'=>is_writable($root)||is_writable(dirname($root))
+];
+$allChecks=!in_array(false,$checks,true);
+$error='';$success=false;$mode=$_POST['mode']??($existingConfig?'existing':'new');
+
 if($_SERVER['REQUEST_METHOD']==='POST'){
-    $host=trim($_POST['host']??'localhost');$port=trim($_POST['port']??'3306');$name=trim($_POST['name']??'');$user=trim($_POST['user']??'');$pass=$_POST['pass']??'';$base=rtrim(trim($_POST['base_url']??''),'/');
-    if(!$name||!$user||!$base)$errors[]='Veritabanı adı, kullanıcı ve site adresi zorunludur.';
-    if(!$errors){
+    $token=(string)($_POST['_csrf']??'');
+    if(empty($_SESSION['_csrf'])||!hash_equals($_SESSION['_csrf'],$token))$error='Güvenlik oturumu yenilendi. Sayfayı yenileyip tekrar deneyin.';
+    elseif(!$allChecks)$error='Sunucuda gerekli PHP bileşenlerinden biri eksik.';
+    else{
         try{
-            $pdo=new PDO("mysql:host={$host};port={$port};dbname={$name};charset=utf8mb4",$user,$pass,[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC,PDO::ATTR_EMULATE_PREPARES=>false]);
-            $schema=[
-"CREATE TABLE admins(id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,username VARCHAR(80) UNIQUE NOT NULL,password_hash VARCHAR(255) NOT NULL,role VARCHAR(50) NOT NULL DEFAULT 'superadmin',must_change_password TINYINT(1) NOT NULL DEFAULT 1,is_active TINYINT(1) NOT NULL DEFAULT 1,created_at DATETIME NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
-"CREATE TABLE admin_logs(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,admin_id INT UNSIGNED NULL,action_name VARCHAR(120) NOT NULL,details TEXT NULL,ip_address VARCHAR(64) NULL,created_at DATETIME NOT NULL,INDEX(admin_id,created_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
-"CREATE TABLE login_attempts(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,username VARCHAR(80),ip_address VARCHAR(64),created_at DATETIME NOT NULL,INDEX(username,ip_address,created_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
-"CREATE TABLE categories(id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,parent_id INT UNSIGNED NULL,name VARCHAR(190) NOT NULL,slug VARCHAR(190) UNIQUE NOT NULL,sort_order INT NOT NULL DEFAULT 0,is_active TINYINT(1) NOT NULL DEFAULT 1,INDEX(parent_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
-"CREATE TABLE brands(id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,name VARCHAR(190) NOT NULL,slug VARCHAR(190) UNIQUE NOT NULL,is_active TINYINT(1) NOT NULL DEFAULT 1,created_at DATETIME NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
-"CREATE TABLE products(id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,category_id INT UNSIGNED NOT NULL,brand_id INT UNSIGNED NULL,name VARCHAR(255) NOT NULL,slug VARCHAR(255) UNIQUE NOT NULL,sku VARCHAR(120) UNIQUE NOT NULL,barcode VARCHAR(120) NULL,purchase_price DECIMAL(12,2) NOT NULL DEFAULT 0,sale_price DECIMAL(12,2) NOT NULL DEFAULT 0,compare_price DECIMAL(12,2) NULL,vat_rate TINYINT UNSIGNED NOT NULL DEFAULT 20,stock INT NOT NULL DEFAULT 0,critical_stock INT NOT NULL DEFAULT 5,shipping_policy ENUM('standard','free','special') NOT NULL DEFAULT 'standard',same_day_delivery TINYINT(1) NOT NULL DEFAULT 0,image VARCHAR(255) NULL,description TEXT NULL,is_active TINYINT(1) NOT NULL DEFAULT 1,is_featured TINYINT(1) NOT NULL DEFAULT 0,view_count BIGINT UNSIGNED NOT NULL DEFAULT 0,sales_count BIGINT UNSIGNED NOT NULL DEFAULT 0,created_at DATETIME NOT NULL,updated_at DATETIME NOT NULL,INDEX(category_id,is_active),INDEX(brand_id,is_active),INDEX(barcode)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
-"CREATE TABLE settings(setting_key VARCHAR(190) PRIMARY KEY,setting_value TEXT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
-"CREATE TABLE shipping_companies(id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,name VARCHAR(190) NOT NULL,price DECIMAL(12,2) NOT NULL DEFAULT 0,is_active TINYINT(1) NOT NULL DEFAULT 1) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
-"CREATE TABLE carts(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,session_key VARCHAR(190) NOT NULL,subtotal DECIMAL(12,2) NOT NULL DEFAULT 0,converted_order_id BIGINT UNSIGNED NULL,created_at DATETIME NOT NULL,updated_at DATETIME NOT NULL,INDEX(session_key),INDEX(converted_order_id,updated_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
-"CREATE TABLE cart_items(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,cart_id BIGINT UNSIGNED NOT NULL,product_id INT UNSIGNED NOT NULL,quantity INT UNSIGNED NOT NULL DEFAULT 1,created_at DATETIME NOT NULL,updated_at DATETIME NOT NULL,UNIQUE KEY(cart_id,product_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
-"CREATE TABLE orders(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,order_no VARCHAR(50) UNIQUE NOT NULL,customer_name VARCHAR(190) NOT NULL,customer_email VARCHAR(190) NOT NULL,customer_phone VARCHAR(80) NOT NULL,city VARCHAR(120) NOT NULL,district VARCHAR(120) NULL,address TEXT NOT NULL,subtotal DECIMAL(12,2) NOT NULL,shipping_total DECIMAL(12,2) NOT NULL DEFAULT 0,grand_total DECIMAL(12,2) NOT NULL,delivery_method ENUM('cargo','same_day') NOT NULL DEFAULT 'cargo',shipping_company_name VARCHAR(190) NULL,status ENUM('new','approved','preparing','shipped','delivered','cancelled') NOT NULL DEFAULT 'new',created_at DATETIME NOT NULL,updated_at DATETIME NOT NULL,INDEX(status,created_at),INDEX(customer_email)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
-"CREATE TABLE order_items(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,order_id BIGINT UNSIGNED NOT NULL,product_id INT UNSIGNED NULL,product_name VARCHAR(255) NOT NULL,sku VARCHAR(120) NOT NULL,quantity INT UNSIGNED NOT NULL,unit_price DECIMAL(12,2) NOT NULL,unit_cost DECIMAL(12,2) NOT NULL DEFAULT 0,line_total DECIMAL(12,2) NOT NULL,INDEX(order_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
-"CREATE TABLE search_logs(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,search_term VARCHAR(255) NOT NULL,result_count INT NOT NULL DEFAULT 0,session_key VARCHAR(190) NULL,created_at DATETIME NOT NULL,INDEX(search_term),INDEX(created_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
-"CREATE TABLE page_views(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,page_type VARCHAR(80) NOT NULL,entity_id BIGINT UNSIGNED NULL,session_key VARCHAR(190) NULL,created_at DATETIME NOT NULL,INDEX(page_type,created_at),INDEX(entity_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
-            ];
-            foreach($schema as $sql){ try{$pdo->exec($sql);}catch(Throwable $e){ if(!str_contains($e->getMessage(),'already exists')) throw $e; } }
+            if($mode==='existing'){
+                if(!$existingConfig||empty($existingConfig['db']))throw new RuntimeException('Mevcut config.php bağlantısı bulunamadı.');
+                $db=$existingConfig['db'];$baseUrl=rtrim((string)($existingConfig['base_url']??''),'/');
+            }else{
+                $db=['host'=>trim((string)($_POST['db_host']??'localhost')),'port'=>trim((string)($_POST['db_port']??'3306')),'name'=>trim((string)($_POST['db_name']??'')),'user'=>trim((string)($_POST['db_user']??'')),'pass'=>(string)($_POST['db_pass']??'')];
+                $baseUrl=rtrim(trim((string)($_POST['base_url']??'')),'/');
+                if(!$db['name']||!$db['user']||!$baseUrl)throw new RuntimeException('Veritabanı adı, kullanıcısı ve site adresi zorunludur.');
+            }
 
-            $cfg="<?php\nreturn ".var_export(['db'=>['host'=>$host,'port'=>$port,'name'=>$name,'user'=>$user,'pass'=>$pass],'base_url'=>$base,'timezone'=>'Europe/Istanbul'],true).";\n";
-            file_put_contents(__DIR__.'/config.php',$cfg);
+            $pdo=make_pdo($db);
+            $fresh=isset($_POST['fresh'])&&$_POST['fresh']==='1';
+            if($fresh&&trim((string)($_POST['fresh_confirm']??''))!=='TOPLUCA')throw new RuntimeException('Sıfırlama için onay alanına TOPLUCA yazmalısınız.');
 
-            $st=$pdo->prepare("INSERT INTO admins(username,password_hash,role,must_change_password,is_active,created_at) VALUES('emrah',?,'superadmin',1,1,NOW()) ON DUPLICATE KEY UPDATE username=username");
-            $st->execute([password_hash('emr321456',PASSWORD_DEFAULT)]);
+            require_once $root.'/app/schema.php';
+            topluca_schema($pdo,$fresh);
 
-            foreach(['free_shipping_limit'=>'500','same_day_enabled'=>'1','same_day_cutoff'=>'15:00','same_day_free_limit'=>'2000','same_day_under_limit_fee'=>'149.90','same_day_daily_capacity'=>'50'] as $k=>$v){$s=$pdo->prepare('INSERT INTO settings(setting_key,setting_value) VALUES(?,?) ON DUPLICATE KEY UPDATE setting_value=setting_value');$s->execute([$k,$v]);}
-            if((int)$pdo->query('SELECT COUNT(*) FROM shipping_companies')->fetchColumn()===0)$pdo->exec("INSERT INTO shipping_companies(name,price,is_active) VALUES('Standart Kargo',89.90,1),('Ekonomik Kargo',74.90,1)");
+            $productCount=(int)$pdo->query('SELECT COUNT(*) FROM products')->fetchColumn();
+            if($productCount===0)topluca_seed($pdo);
 
-            $ensureCat=function(string $name,?int $parent,int $order=0) use($pdo): int {
-                $base=slug($name); $slug=$base;
-                if($parent){$q=$pdo->prepare('SELECT slug FROM categories WHERE id=?');$q->execute([$parent]);$ps=$q->fetchColumn(); if($ps)$slug=$ps.'-'.$base;}
-                $q=$pdo->prepare('SELECT id FROM categories WHERE slug=?');$q->execute([$slug]); if($id=$q->fetchColumn())return (int)$id;
-                $q=$pdo->prepare('INSERT INTO categories(parent_id,name,slug,sort_order,is_active) VALUES(?,?,?,?,1)');$q->execute([$parent,$name,$slug,$order]);return (int)$pdo->lastInsertId();
-            };
-            $root=[];
-            foreach(['Kırtasiye','Kitap','Bilgisayar Sarf Malzemeleri','Yazıcı, Toner & Kartuş','Kağıt & Ofis Ürünleri','Okul Ürünleri','Hobi & Sanat'] as $i=>$n)$root[$n]=$ensureCat($n,null,$i+1);
-            $pens=$ensureCat('Kalemler',$root['Kırtasiye'],1);$bookKpss=$ensureCat('KPSS',$root['Kitap'],1);$lis=$ensureCat('GY-GK Lisans',$bookKpss,1);$sb=$ensureCat('Soru Bankası',$lis,1);$mouse=$ensureCat('Mouse',$root['Bilgisayar Sarf Malzemeleri'],1);$toner=$ensureCat('Toner',$root['Yazıcı, Toner & Kartuş'],1);$a4=$ensureCat('Fotokopi Kağıdı',$root['Kağıt & Ofis Ürünleri'],1);$bag=$ensureCat('Okul Çantaları',$root['Okul Ürünleri'],1);$paint=$ensureCat('Resim Boyaları',$root['Hobi & Sanat'],1);
+            if($mode==='new'){
+                $appKey=bin2hex(random_bytes(32));
+                $config="<?php\nreturn ".var_export([
+                    'db'=>$db,'base_url'=>$baseUrl,'timezone'=>'Europe/Istanbul','app_key'=>$appKey,'environment'=>'production'
+                ],true).";\n";
+                if(file_put_contents($configPath,$config)===false)throw new RuntimeException('config.php oluşturulamadı. Klasör yazma izinlerini kontrol edin.');
+            }
 
-            $ensureBrand=function(string $name)use($pdo):int{$sl=slug($name);$q=$pdo->prepare('SELECT id FROM brands WHERE slug=?');$q->execute([$sl]);if($id=$q->fetchColumn())return(int)$id;$q=$pdo->prepare('INSERT INTO brands(name,slug,is_active,created_at) VALUES(?,?,1,NOW())');$q->execute([$name,$sl]);return(int)$pdo->lastInsertId();};
-            $b=['Faber-Castell'=>$ensureBrand('Faber-Castell'),'İksir Yayıncılık'=>$ensureBrand('İksir Yayıncılık'),'Logitech'=>$ensureBrand('Logitech'),'HP'=>$ensureBrand('HP'),'Navigator'=>$ensureBrand('Navigator'),'TOPLUCA'=>$ensureBrand('TOPLUCA'),'Artline'=>$ensureBrand('Artline')];
-            $seed=[
-                [$pens,$b['Faber-Castell'],'Faber-Castell Tükenmez Kalem Mavi 10’lu','TPL-KRT-001','869000000001',69.90,109.90,129.90,85,'standard',1,74],
-                [$sb,$b['İksir Yayıncılık'],'KPSS GY-GK Lisans Bağlam Temelli Soru Bankası','TPL-KTP-001','9786250000001',210,349.90,399.90,120,'standard',1,96],
-                [$mouse,$b['Logitech'],'Logitech M220 Kablosuz Mouse Siyah','TPL-BLG-001','5099206066199',315,499,549,48,'free',1,132],
-                [$toner,$b['HP'],'HP 107A Uyumlu Siyah Toner','TPL-TNR-001','193905000001',360,599,699,35,'free',1,88],
-                [$a4,$b['Navigator'],'Navigator A4 Fotokopi Kağıdı 80 gr 500 Yaprak','TPL-KGT-001','560202400001',145,189.90,209.90,240,'standard',1,214],
-                [$bag,$b['TOPLUCA'],'TOPLUCA Günlük Okul Çantası Siyah','TPL-OKL-001','869000000006',420,699,799,28,'free',1,25],
-                [$paint,$b['Artline'],'Akrilik Boya Başlangıç Seti 12 Renk','TPL-HOB-001','869000000007',165,279.90,319.90,41,'standard',1,33]
-            ];
-            foreach($seed as $r){[$cid,$bid,$pn,$sku,$barcode,$buy,$sell,$cmp,$stock,$ship,$same,$sales]=$r;$q=$pdo->prepare('SELECT id FROM products WHERE sku=?');$q->execute([$sku]);if($q->fetchColumn())continue;$q=$pdo->prepare('INSERT INTO products(category_id,brand_id,name,slug,sku,barcode,purchase_price,sale_price,compare_price,vat_rate,stock,critical_stock,shipping_policy,same_day_delivery,description,is_active,is_featured,sales_count,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,20,?,5,?,?,?,1,1,?,NOW(),NOW())');$q->execute([$cid,$bid,$pn,slug($pn),$sku,$barcode,$buy,$sell,$cmp,$stock,$ship,$same,$pn.' - TOPLUCA demo ürünü.',$sales]);}
-            file_put_contents($lock,date('c'));
-            $ok=true;
-        }catch(Throwable $e){$errors[]=$e->getMessage();}
+            if(!is_dir($root.'/uploads/products'))@mkdir($root.'/uploads/products',0755,true);
+            if(!is_dir($root.'/uploads/banners'))@mkdir($root.'/uploads/banners',0755,true);
+            if(!is_dir($root.'/uploads/brands'))@mkdir($root.'/uploads/brands',0755,true);
+            @file_put_contents($lockPath,'TOPLUCA V3 '.date('c'));
+            $success=true;
+        }catch(Throwable $e){$error=$e->getMessage();}
     }
 }
-?><!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>TOPLUCA Kurulum</title><style>body{font-family:Arial;background:#f4f5f7;margin:0;padding:40px}.box{max-width:720px;margin:auto;background:#fff;padding:32px;border-radius:18px;box-shadow:0 20px 60px #00000012}.logo{font-size:34px;font-weight:900}.logo span{color:#ff5a00}.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}label{font-size:12px;font-weight:700}input{width:100%;padding:11px;margin-top:6px;border:1px solid #ddd;border-radius:8px;box-sizing:border-box}.full{grid-column:1/-1}button{width:100%;padding:14px;border:0;border-radius:9px;background:#ff5a00;color:#fff;font-weight:900}.err{background:#fff0f0;color:#a22;padding:10px;border-radius:8px;margin:10px 0}.ok{background:#edf9f1;padding:20px;border-radius:10px}.note{background:#fff4ed;padding:12px;border-radius:8px;margin:18px 0;font-size:12px}@media(max-width:600px){body{padding:15px}.grid{grid-template-columns:1fr}.full{grid-column:auto}}</style></head><body><div class="box"><div class="logo">TOPLU<span>CA</span></div><p>FTP-ready PHP/MySQL kurulum</p><?php if($ok):?><div class="ok"><h2>Kurulum tamamlandı 🎉</h2><p>WebYönet: <b>/webyonet/</b></p><p>Kullanıcı: <b>emrah</b><br>Başlangıç şifresi: <b>emr321456</b></p><p><a href="index.php">Siteyi aç</a> · <a href="webyonet/">WebYönet</a></p><p><b>Şimdi install.php dosyasını FTP'den silin.</b></p></div><?php else:?><?php foreach($errors as $e):?><div class="err"><?=hh($e)?></div><?php endforeach;?><div class="note">Önce hosting panelinizden boş MySQL veritabanı ve kullanıcı oluşturun.</div><form method="post"><div class="grid"><label>Sunucu<input name="host" value="<?=hh($_POST['host']??'localhost')?>"></label><label>Port<input name="port" value="<?=hh($_POST['port']??'3306')?>"></label><label>Veritabanı<input name="name" required value="<?=hh($_POST['name']??'')?>"></label><label>Kullanıcı<input name="user" required value="<?=hh($_POST['user']??'')?>"></label><label class="full">Şifre<input type="password" name="pass"></label><label class="full">Site adresi<input name="base_url" required value="<?=hh($_POST['base_url']??'https://topluca.net')?>"></label><div class="full"><button>TOPLUCA'YI KUR</button></div></div></form><?php endif;?></div></body></html>
+
+if(empty($_SESSION['_csrf']))$_SESSION['_csrf']=bin2hex(random_bytes(32));
+$detectedBase='https://'.($_SERVER['HTTP_HOST']??'iksiryayincilik.com').rtrim(str_replace('\\','/',dirname($_SERVER['SCRIPT_NAME']??'/topluca/install.php')),'/');
+?><!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>TOPLUCA V3 Kurulum</title><style>
+*{box-sizing:border-box}body{margin:0;background:#f3f5f7;color:#171717;font-family:Inter,Arial,sans-serif}.wrap{width:min(920px,calc(100% - 28px));margin:45px auto}.card{background:#fff;border:1px solid #e4e7eb;border-radius:22px;box-shadow:0 24px 70px #0000000d;overflow:hidden}.head{padding:30px 34px;background:linear-gradient(120deg,#121212,#272727);color:#fff}.brand{font-size:30px;font-weight:950;letter-spacing:-1.5px}.brand b{color:#ff5a00}.head p{color:#bbb;margin-bottom:0}.body{padding:30px 34px}.checks{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin:18px 0}.check{padding:11px;border-radius:10px;background:#f7f8f9;font-size:12px}.check.ok{color:#157244}.check.no{background:#fff0f0;color:#a32929}.notice{padding:14px;border-radius:10px;background:#fff5ee;color:#87451e;margin:15px 0;font-size:13px}.error{padding:14px;border-radius:10px;background:#fff0f0;color:#a32929;margin:15px 0}.success{padding:25px;border-radius:15px;background:#ecfaf2;color:#155e35}.success a{color:#e54f00;font-weight:800}.tabs{display:flex;gap:8px;margin:20px 0}.tabs label{flex:1;padding:14px;border:1px solid #ddd;border-radius:11px;cursor:pointer}.grid{display:grid;grid-template-columns:1fr 1fr;gap:13px}label.field{font-size:12px;font-weight:800;color:#4b5563}input{width:100%;display:block;margin-top:6px;padding:12px;border:1px solid #d9dde2;border-radius:9px;outline:0}input:focus{border-color:#ff5a00;box-shadow:0 0 0 3px #ff5a0015}.full{grid-column:1/-1}.danger{margin-top:22px;padding:15px;border:1px solid #ffd8d8;background:#fff8f8;border-radius:12px}.btn{width:100%;margin-top:20px;border:0;border-radius:10px;padding:14px;background:#ff5a00;color:#fff;font-weight:900;cursor:pointer}.muted{font-size:12px;color:#777}@media(max-width:680px){.wrap{margin:15px auto}.head,.body{padding:23px}.grid,.checks{grid-template-columns:1fr}.tabs{display:block}.tabs label{display:block;margin-bottom:8px}}
+</style></head><body><div class="wrap"><div class="card"><div class="head"><div class="brand">TOPLU<b>CA</b> <span style="font-size:13px;color:#ff5a00">V3</span></div><p>Temiz kurulum • PHP/MySQL • FTP/Plesk uyumlu</p></div><div class="body">
+<?php if($success):?><div class="success"><h2>Kurulum tamamlandı 🎉</h2><p>TOPLUCA V3 veritabanı ve örnek ürünler hazır.</p><p><b>WebYönet:</b> <code>emrah</code> / <code>emr321456</code></p><p><a href="<?=ih(($existingConfig['base_url']??$baseUrl).'/')?>">Siteyi aç →</a> &nbsp; <a href="<?=ih(($existingConfig['base_url']??$baseUrl).'/webyonet/')?>">WebYönet →</a></p><p><b>Kurulumdan sonra install.php dosyasını Plesk Dosyalar bölümünden sil.</b></p></div>
+<?php else:?>
+<h2>Kuruluma hazır mıyız?</h2><div class="checks"><?php foreach($checks as $name=>$ok):?><div class="check <?=$ok?'ok':'no'?>"><?=$ok?'✓':'×'?> <?=ih($name)?></div><?php endforeach;?></div>
+<?php if($error):?><div class="error"><?=ih($error)?></div><?php endif;?>
+<form method="post"><input type="hidden" name="_csrf" value="<?=ih($_SESSION['_csrf'])?>"><div class="tabs">
+<?php if($existingConfig):?><label><input type="radio" name="mode" value="existing" <?=$mode==='existing'?'checked':''?>> <b>Mevcut veritabanı bağlantısını kullan</b><br><span class="muted">config.php içindeki bağlantıyla devam eder; şifreyi yeniden istemez.</span></label><?php endif;?>
+<label><input type="radio" name="mode" value="new" <?=$mode==='new'?'checked':''?>> <b>Yeni bağlantı gir</b><br><span class="muted">Yeni veritabanı veya yeni klasör kurulumu için.</span></label></div>
+<div class="grid"><label class="field">MySQL Sunucu<input name="db_host" value="localhost"></label><label class="field">Port<input name="db_port" value="3306"></label><label class="field">Veritabanı Adı<input name="db_name"></label><label class="field">Veritabanı Kullanıcısı<input name="db_user"></label><label class="field full">Veritabanı Şifresi<input type="password" name="db_pass"></label><label class="field full">Site Adresi<input name="base_url" value="<?=ih($detectedBase)?>"></label></div>
+<div class="danger"><label><input style="width:auto;display:inline" type="checkbox" name="fresh" value="1"> <b>Mevcut TOPLUCA tablolarını tamamen sıfırla ve temiz kurulum yap</b></label><p class="muted">Bu seçenek yalnızca geliştirme veritabanında kullanılmalı. Mevcut demo siparişleri/ürünleri siler.</p><label class="field">Sıfırlama onayı<input name="fresh_confirm" placeholder="Sıfırlamak istiyorsanız TOPLUCA yazın"></label></div>
+<button class="btn">TOPLUCA V3'Ü KUR</button></form><div class="notice">Not: FTP bağlantısı bu kurulumdan bağımsızdır. Bu dosya yalnızca web klasörü ve MySQL üzerinde işlem yapar; Plesk FTP servisini açıp kapatamaz.</div>
+<?php endif;?></div></div></div></body></html>

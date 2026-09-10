@@ -1,55 +1,26 @@
 <?php
-declare(strict_types=1);
 require __DIR__.'/app/bootstrap.php';
-
 $error='';
-if(($_GET['action']??'')==='logout'){
-    unset($_SESSION['user_id']);
-    flash('success','Hesabınızdan çıkış yaptınız.');
-    redirect('account.php');
-}
-
 if($_SERVER['REQUEST_METHOD']==='POST'){
-    csrf_check();
-    $action=$_POST['action']??'';
-    if($action==='login'){
-        $email=trim($_POST['email']??'');$password=(string)($_POST['password']??'');
-        $s=db()->prepare('SELECT * FROM users WHERE email=? AND is_active=1 LIMIT 1');$s->execute([$email]);$u=$s->fetch();
-        if($u && $u['password_hash'] && password_verify($password,$u['password_hash'])){
-            session_regenerate_id(true);$_SESSION['user_id']=(int)$u['id'];
-            db()->prepare('UPDATE users SET last_login_at=NOW(),updated_at=NOW() WHERE id=?')->execute([$u['id']]);
-            redirect('account.php');
-        } else $error='E-posta veya şifre hatalı.';
-    }
+  csrf_check();$action=(string)($_POST['action']??'');
+  if($action==='login'){
+    $email=mb_strtolower(trim((string)($_POST['email']??'')),'UTF-8');$password=(string)($_POST['password']??'');
+    $s=db()->prepare('SELECT * FROM users WHERE email=? AND is_active=1 LIMIT 1');$s->execute([$email]);$u=$s->fetch();
+    if($u&&password_verify($password,$u['password_hash'])){login_user($u);$after=$_SESSION['after_login']??null;unset($_SESSION['after_login']);if($after&&str_starts_with($after,'/')){header('Location: '.$after);exit;}redirect('account.php');}else$error='E-posta veya şifre hatalı.';
+  }elseif($action==='register'){
+    $first=trim((string)($_POST['first_name']??''));$last=trim((string)($_POST['last_name']??''));$email=mb_strtolower(trim((string)($_POST['email']??'')),'UTF-8');$phone=trim((string)($_POST['phone']??''));$password=(string)($_POST['password']??'');
+    if(mb_strlen($first)<2||mb_strlen($last)<2)$error='Ad ve soyad alanlarını kontrol edin.';elseif(!filter_var($email,FILTER_VALIDATE_EMAIL))$error='Geçerli bir e-posta girin.';elseif(strlen($password)<10)$error='Şifre en az 10 karakter olmalıdır.';else{$s=db()->prepare('SELECT COUNT(*) FROM users WHERE email=?');$s->execute([$email]);if((int)$s->fetchColumn()>0)$error='Bu e-posta ile bir hesap zaten var.';else{$s=db()->prepare('INSERT INTO users(email,password_hash,first_name,last_name,phone,is_active,created_at,updated_at) VALUES(?,?,?,?,?,1,NOW(),NOW())');$s->execute([$email,password_hash($password,PASSWORD_DEFAULT),$first,$last,$phone]);$id=(int)db()->lastInsertId();$s=db()->prepare('SELECT * FROM users WHERE id=?');$s->execute([$id]);login_user($s->fetch());redirect('account.php');}}
+  }elseif($action==='save_address'&&user_logged_in()){
+    $u=current_user();[$a,$errors]=checkout_validate_address(array_merge($_POST,['email'=>$u['email'],'billing_same_as_shipping'=>1]));
+    if($errors)$error=implode(' ',$errors);else{db()->prepare('UPDATE user_addresses SET is_default_shipping=0 WHERE user_id=?')->execute([$u['id']]);db()->prepare("INSERT INTO user_addresses(user_id,title,first_name,last_name,phone,city,district,neighborhood,address,postal_code,is_default_shipping,is_default_billing,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,1,1,NOW(),NOW())")->execute([$u['id'],trim((string)($_POST['title']??'Adresim')),$a['first_name'],$a['last_name'],$a['phone'],$a['city'],$a['district'],$a['neighborhood'],$a['address'],$a['postal_code']]);flash('success','Adresiniz kaydedildi.');redirect('account.php?tab=addresses');}
+  }
 }
-
-$user=null;$orders=[];$addresses=[];
-if(!empty($_SESSION['user_id'])){
-    $s=db()->prepare('SELECT * FROM users WHERE id=? AND is_active=1');$s->execute([(int)$_SESSION['user_id']]);$user=$s->fetch()?:null;
-    if(!$user)unset($_SESSION['user_id']);
-    else{
-        $s=db()->prepare('SELECT * FROM orders WHERE user_id=? ORDER BY id DESC LIMIT 50');$s->execute([$user['id']]);$orders=$s->fetchAll();
-        $s=db()->prepare('SELECT * FROM user_addresses WHERE user_id=? ORDER BY is_default_shipping DESC,id DESC');$s->execute([$user['id']]);$addresses=$s->fetchAll();
-    }
-}
-$pageTitle='Hesabım | TOPLUCA';
-require __DIR__.'/includes/header.php';
-?>
-<section class="account-shell"><div class="container">
-<?php if(!$user):?>
-    <div class="account-login-layout">
-        <div class="account-welcome"><span class="eyebrow">TOPLUCA HESABIM</span><h1>Siparişlerinize tek yerden ulaşın.</h1><p>Sipariş takibi, kayıtlı adresler, favoriler ve hızlı alışveriş için hesabınıza giriş yapın.</p><div class="account-benefits"><div>✓ Sipariş geçmişi</div><div>✓ Kayıtlı teslimat adresleri</div><div>✓ Favoriler</div><div>✓ Daha hızlı ödeme</div></div></div>
-        <form class="account-login-card" method="post"><?=csrf_field()?><input type="hidden" name="action" value="login"><h2>Giriş Yap</h2><p>Sipariş sonrası oluşturduğunuz hesabınızla giriş yapın.</p><?php if($error):?><div class="checkout-alert error"><?=h($error)?></div><?php endif;?><label>E-posta<input type="email" name="email" autocomplete="email" required></label><label>Şifre<input type="password" name="password" autocomplete="current-password" required></label><button class="checkout-primary">Hesabıma Giriş Yap</button><small>İlk siparişinizi üye olmadan verebilir, sipariş tamamlandıktan sonra yalnızca bir şifre belirleyerek hesabınızı oluşturabilirsiniz.</small></form>
-    </div>
-<?php else:?>
-    <div class="account-head"><div><span class="eyebrow">HESABIM</span><h1>Merhaba, <?=h($user['first_name']?:'TOPLUCA müşterisi')?> 👋</h1><p><?=h($user['email'])?></p></div><a class="ghost-button" href="<?=url('account.php?action=logout')?>">Çıkış Yap</a></div>
-    <div class="account-dashboard">
-        <aside class="account-nav"><a class="active" href="#orders">Siparişlerim <b><?=count($orders)?></b></a><a href="#addresses">Adreslerim <b><?=count($addresses)?></b></a><a href="#favorites">Favorilerim</a><a href="<?=url('cart.php')?>">Sepetim</a></aside>
-        <div class="account-content">
-            <section id="orders" class="account-panel"><div class="panel-title"><h2>Siparişlerim</h2><span>Son siparişleriniz</span></div><?php if(!$orders):?><div class="empty-card">Henüz hesabınıza bağlı sipariş yok.</div><?php else:?><div class="account-orders"><?php foreach($orders as $o):?><div class="account-order"><div><small>Sipariş</small><b><?=h($o['order_no'])?></b><span><?=date('d.m.Y H:i',strtotime($o['created_at']))?></span></div><div><small>Durum</small><b><?=h($o['status'])?></b></div><div><small>Teslimat</small><b><?=h($o['shipping_company_name']??'')?></b></div><div><small>Toplam</small><strong><?=money($o['grand_total'])?></strong></div></div><?php endforeach;?></div><?php endif;?></section>
-            <section id="addresses" class="account-panel"><div class="panel-title"><h2>Adreslerim</h2><span>Kayıtlı teslimat adresleri</span></div><?php if(!$addresses):?><div class="empty-card">Henüz kayıtlı adresiniz yok. Yeni siparişinizde adresinizi hesabınıza kaydedebileceksiniz.</div><?php else:?><div class="address-cards"><?php foreach($addresses as $a):?><div class="address-card"><b><?=h($a['title'])?></b><span><?=h($a['first_name'].' '.$a['last_name'])?></span><p><?=h($a['address'])?><br><?=h($a['district'].' / '.$a['city'])?></p></div><?php endforeach;?></div><?php endif;?></section>
-        </div>
-    </div>
-<?php endif;?>
-</div></section>
-<?php require __DIR__.'/includes/footer.php';
+$pageTitle='Hesabım | TOPLUCA';require __DIR__.'/includes/header.php';
+if(!user_logged_in()):?>
+<section class="account-page"><div class="shell"><div class="breadcrumbs"><a href="<?=url()?>">Anasayfa</a><span>›</span><span>Hesabım</span></div><?php if($error):?><div class="flash flash--error"><?=h($error)?></div><?php endif;?><div class="auth-layout"><div class="auth-card"><h2>Giriş Yap</h2><p>Siparişlerini, adreslerini ve favorilerini tek yerden yönet.</p><form method="post"><input type="hidden" name="action" value="login"><?=csrf_field()?><label class="field">E-posta<input type="email" name="email" autocomplete="email" required></label><label class="field">Şifre<input type="password" name="password" autocomplete="current-password" required></label><button class="primary-btn" style="margin-top:15px">Giriş Yap</button></form></div><div class="auth-card"><h2>Üye Ol</h2><p>Hızlı sipariş, kayıtlı adresler, favoriler ve sipariş geçmişi için ücretsiz hesap oluştur.</p><form method="post"><input type="hidden" name="action" value="register"><?=csrf_field()?><div class="form-grid"><label class="field">Ad<input name="first_name" required></label><label class="field">Soyad<input name="last_name" required></label><label class="field field--full">E-posta<input type="email" name="email" required></label><label class="field field--full">Telefon<input name="phone"></label><label class="field field--full">Şifre<input type="password" name="password" minlength="10" required></label></div><button class="primary-btn" style="margin-top:15px">Üyeliğimi Oluştur</button></form></div></div></div></section>
+<?php else:$u=current_user();$tab=(string)($_GET['tab']??'overview');$s=db()->prepare('SELECT * FROM orders WHERE user_id=? ORDER BY id DESC LIMIT 50');$s->execute([$u['id']]);$orders=$s->fetchAll();$s=db()->prepare('SELECT * FROM user_addresses WHERE user_id=? ORDER BY is_default_shipping DESC,id DESC');$s->execute([$u['id']]);$addresses=$s->fetchAll();?>
+<section class="account-page"><div class="shell"><div class="breadcrumbs"><a href="<?=url()?>">Anasayfa</a><span>›</span><span>Hesabım</span></div><div class="account-layout"><nav class="account-nav"><a class="<?=$tab==='overview'?'active':''?>" href="<?=url('account.php')?>"><span>Genel Bakış</span><b>›</b></a><a class="<?=$tab==='orders'?'active':''?>" href="<?=url('account.php?tab=orders')?>"><span>Siparişlerim</span><b><?=count($orders)?></b></a><a class="<?=$tab==='addresses'?'active':''?>" href="<?=url('account.php?tab=addresses')?>"><span>Adreslerim</span><b><?=count($addresses)?></b></a><a href="<?=url('favorites.php')?>"><span>Favorilerim</span><b>♡</b></a><a href="<?=url('logout.php')?>"><span>Çıkış Yap</span><b>→</b></a></nav><div>
+<?php if($tab==='overview'):?><div class="account-card"><h2>Merhaba, <?=h($u['first_name'])?> 👋</h2><p style="font-size:11px;color:#707780">TOPLUCA hesabından siparişlerini, teslimat adreslerini ve favorilerini yönetebilirsin.</p><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:18px"><div class="review-block"><h4>Toplam Sipariş</h4><strong style="font-size:24px"><?=count($orders)?></strong></div><div class="review-block"><h4>Kayıtlı Adres</h4><strong style="font-size:24px"><?=count($addresses)?></strong></div><div class="review-block"><h4>Son Sipariş</h4><strong style="font-size:13px"><?=h($orders[0]['order_no']??'Henüz yok')?></strong></div></div></div><div class="account-card" style="margin-top:12px"><h2>Son Siparişler</h2><?php if(!$orders):?><p>Henüz siparişiniz yok.</p><?php else:foreach(array_slice($orders,0,5) as $o):?><div class="order-card"><div class="order-card__head"><div><b><?=h($o['order_no'])?></b><br><small><?=h($o['created_at'])?></small></div><div style="text-align:right"><span class="status-pill"><?=h($o['status'])?></span><br><b><?=money($o['grand_total'])?></b></div></div></div><?php endforeach;endif;?></div>
+<?php elseif($tab==='orders'):?><div class="account-card"><h2>Siparişlerim</h2><?php if(!$orders):?><div class="empty-state" style="padding:30px"><p>Henüz siparişiniz yok.</p></div><?php else:foreach($orders as $o):?><div class="order-card"><div class="order-card__head"><div><b><?=h($o['order_no'])?></b><br><small><?=h($o['created_at'])?> · <?=h($o['shipping_company_name'])?></small></div><div style="text-align:right"><span class="status-pill"><?=h($o['status'])?></span><br><b><?=money($o['grand_total'])?></b></div></div><p style="font-size:9.5px;color:#777;margin-bottom:0"><?=h($o['shipping_district'].' / '.$o['shipping_city'])?><?=!empty($o['tracking_no'])?' · Takip: '.h($o['tracking_no']):''?></p></div><?php endforeach;endif;?></div>
+<?php elseif($tab==='addresses'):?><div class="account-card"><h2>Adreslerim</h2><?php foreach($addresses as $a):?><div class="review-block"><h4><?=h($a['title'])?> <?=$a['is_default_shipping']?'· Varsayılan':''?></h4><p><b><?=h($a['first_name'].' '.$a['last_name'])?></b> · <?=h($a['phone'])?></p><p><?=h($a['address'])?> · <?=h($a['district'].' / '.$a['city'])?></p></div><?php endforeach;?></div><div class="account-card" style="margin-top:12px"><h2>Yeni Adres Ekle</h2><?php if($error):?><div class="flash flash--error"><?=h($error)?></div><?php endif;?><form method="post"><input type="hidden" name="action" value="save_address"><?=csrf_field()?><div class="form-grid"><label class="field">Adres Başlığı<input name="title" value="Adresim"></label><label class="field">Ad<input name="first_name" value="<?=h($u['first_name'])?>" required></label><label class="field">Soyad<input name="last_name" value="<?=h($u['last_name'])?>" required></label><label class="field">Telefon<input name="phone" value="<?=h($u['phone'])?>" required></label><label class="field">İl<input name="city" required></label><label class="field">İlçe<input name="district" required></label><label class="field">Mahalle<input name="neighborhood"></label><label class="field">Posta Kodu<input name="postal_code"></label><label class="field field--full">Açık Adres<textarea name="address" required></textarea></label></div><button class="primary-btn" style="margin-top:13px">Adresi Kaydet</button></form></div><?php endif;?></div></div></div></section>
+<?php endif;require __DIR__.'/includes/footer.php';?>

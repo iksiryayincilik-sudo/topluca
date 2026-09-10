@@ -1,25 +1,39 @@
-# TOPLUCA V1
+# TOPLUCA V3
 
-FTP ile yüklenebilen PHP 8.1+ / MySQL tabanlı TOPLUCA e-ticaret çekirdeği.
+FTP/Plesk üzerinde çalışacak şekilde hazırlanmış PHP 8.1+ / MySQL e-ticaret çekirdeği.
 
-## Kurulum
-1. Depoyu ZIP olarak indirip `public_html` içine çıkarın.
-2. Hosting panelinden boş bir MySQL veritabanı oluşturun.
-3. Tarayıcıdan `/install.php` adresini açın.
-4. Veritabanı bilgilerini girip kurulumu tamamlayın.
-5. Yönetim paneli: `/webyonet/`
+## Geçici test kurulumu
 
-Başlangıç yönetici hesabı:
+Hedef URL: `https://iksiryayincilik.com/topluca`
+
+1. `v3-rebuild` dalındaki dosyaları `topluca` klasörüne yükleyin.
+2. Mevcut çalışan `config.php` varsa koruyabilirsiniz. Yoksa Plesk'te oluşturduğunuz MySQL bilgileriyle `install.php` üzerinden bağlantı oluşturun.
+3. Temiz geliştirme kurulumu için installer'da **Mevcut TOPLUCA tablolarını tamamen sıfırla** seçeneğini işaretleyin ve onay alanına `TOPLUCA` yazın.
+4. Kurulum bitince `install.php` dosyasını sunucudan silin.
+5. WebYönet: `/topluca/webyonet/`
+
+İlk WebYönet hesabı:
 - Kullanıcı: `emrah`
-- Şifre: `emr321456`
+- Başlangıç şifresi: `emr321456`
 
-İlk girişten sonra şifreyi değiştirin.
+İlk girişten sonra şifre değiştirilmelidir.
 
-## Gereksinimler
-- PHP 8.1+
-- PDO MySQL
-- MySQL 5.7+ / MariaDB 10.4+
-- Apache mod_rewrite önerilir
+## Checkout akışı
 
-## Not
-Kredi kartı ödeme entegrasyonu bu çekirdekte bilerek etkin değildir. PayTR/iyzico gibi bir sağlayıcı daha sonra bağlanmalıdır; kart verisi uygulama veritabanında tutulmamalıdır.
+`Sepet → Adres → Teslimat → Ödeme → Son Kontrol → Sipariş`
+
+Teslimat seçenekleri adres girilmeden hesaplanmaz. Ankara aynı gün teslimat motoru; il, ilçe, çalışma günü, tatil, saat kesimi, günlük kapasite, ürün uygunluğu ve sepet limitini birlikte kontrol eder. Ankara dışı adreslerde aynı gün teslimat seçilemez.
+
+Misafir müşteri siparişini tamamladıktan sonra yalnızca şifre belirleyerek hesap oluşturabilir; sipariş ve teslimat adresi otomatik olarak yeni hesaba bağlanır.
+
+## WebYönet
+
+Dashboard, sipariş, ürün, kategori, marka, stok, satın alma, tedarikçi, müşteri, kargo, Ankara aynı gün, kampanya, banner, ana sayfa modülleri, arama eş anlamlıları, sepet analizi, satış/kâr raporu, CSV içe/dışa aktarma, site ayarları ve işlem logları bulunur.
+
+## Ödeme
+
+Kart ödeme ekranı gerçek bir ödeme kuruluşu entegrasyonu olmadan aktif edilmemelidir. Kart/CVV verisi TOPLUCA veritabanında saklanmamalıdır.
+
+## FTP notu
+
+TOPLUCA PHP dosyaları FTP servisini açıp kapatamaz. FTP erişimi Plesk sistem kullanıcısı, FTP servisi, TCP 21, FTPS/pasif mod ve firewall/Fail2Ban ayarlarından bağımsız olarak yönetilir.

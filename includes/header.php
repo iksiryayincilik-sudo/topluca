@@ -39,8 +39,9 @@ if($announcementText==='')$announcementText="Ankara’da ".setting('same_day_cut
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="<?=app_url('assets/css/app.css')?>?v=5.1.0">
 <link rel="stylesheet" href="<?=app_url('assets/css/v5.css')?>?v=5.1.0">
+<link rel="stylesheet" href="<?=app_url('assets/css/v5-additions.css')?>?v=5.1.0">
 </head>
-<body class="<?=h(theme_body_class())?>">
+<body class="<?=h(theme_body_class())?>"<?php if(theme_inline_vars()!==''):?> style="<?=h(theme_inline_vars())?>"<?php endif;?>>
 <?php if($announcementEnabled):?>
 <div class="announcement">
   <div class="container announcement-inner">

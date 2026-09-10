@@ -1,0 +1,6 @@
+<?php
+require __DIR__.'/app/bootstrap.php';
+$pageTitle='Sipariş Takibi | TOPLUCA';$result=null;$error='';
+if($_SERVER['REQUEST_METHOD']==='POST'){csrf_check();$no=trim($_POST['order_no']??'');$email=trim($_POST['email']??'');$s=db()->prepare('SELECT * FROM orders WHERE order_no=? AND customer_email=? LIMIT 1');$s->execute([$no,$email]);$result=$s->fetch();if(!$result)$error='Sipariş bulunamadı.';}
+require __DIR__.'/includes/header.php';
+?><section class="page-head"><div class="container"><h1>Sipariş Takibi</h1></div></section><section class="section"><div class="container" style="max-width:760px"><form class="summary" method="post"><?=csrf_field()?><p><input style="width:100%;padding:10px" name="order_no" placeholder="Sipariş numarası" required></p><p><input style="width:100%;padding:10px" type="email" name="email" placeholder="Siparişte kullanılan e-posta" required></p><button class="checkout" style="border:0;width:100%">Siparişimi Bul</button></form><?php if($error):?><div class="flash error" style="margin-top:15px"><?=h($error)?></div><?php endif;?><?php if($result):?><div class="summary" style="margin-top:15px"><h3><?=h($result['order_no'])?></h3><p>Durum: <b><?=h($result['status'])?></b></p><p>Toplam: <b><?=money($result['grand_total'])?></b></p></div><?php endif;?></div></section><?php require __DIR__.'/includes/footer.php';

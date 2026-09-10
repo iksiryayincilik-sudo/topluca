@@ -3,6 +3,7 @@ require dirname(__DIR__).'/app/bootstrap.php';
 require_admin();
 require_once __DIR__.'/_helpers.php';
 require_once __DIR__.'/actions_v5.php';
+require_once __DIR__.'/actions_extra.php';
 require_once __DIR__.'/actions.php';
 
 $admin=current_admin();

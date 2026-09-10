@@ -9,11 +9,6 @@ function v5_column_exists(PDO $pdo,string $table,string $column): bool{
 function v5_add_column(PDO $pdo,string $table,string $column,string $definition): void{
     if(!v5_column_exists($pdo,$table,$column))$pdo->exec("ALTER TABLE `{$table}` ADD COLUMN `{$column}` {$definition}");
 }
-function drop_v5_tables(PDO $pdo): void{
-    $pdo->exec('SET FOREIGN_KEY_CHECKS=0');
-    foreach(['content_pages','homepage_feature_boxes','theme_schedules','admin_roles'] as $table)$pdo->exec('DROP TABLE IF EXISTS `'.$table.'`');
-    $pdo->exec('SET FOREIGN_KEY_CHECKS=1');
-}
 function apply_v5_schema(PDO $pdo): void{
     $pdo->exec("CREATE TABLE IF NOT EXISTS theme_schedules (
         id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -83,14 +78,34 @@ function apply_v5_schema(PDO $pdo): void{
         'site_title'=>'TOPLUCA | Kırtasiye, Kitap, Teknoloji ve Ofis Ürünleri',
         'site_description'=>'Kırtasiye, kitap, bilgisayar sarf, toner, kağıt, okul ve hobi ürünlerini TOPLUCA’da avantajlı fiyatlarla keşfedin.',
         'site_keywords'=>'kırtasiye, kitap, ofis ürünleri, toner, kartuş, bilgisayar, okul ürünleri, toplu alım',
-        'site_logo'=>'','site_favicon'=>'','site_og_image'=>'',
-        'active_theme'=>'standard','theme_auto_schedule'=>'1',
-        'banner_autoplay'=>'1','banner_interval'=>'5500',
-        'company_name'=>'Yıldız Ofis Kırtasiye','company_email'=>'info@topluca.net','company_phone'=>'','company_address'=>'Ankara',
+        'site_logo'=>'',
+        'site_favicon'=>'',
+        'site_og_image'=>'',
+        'announcement_enabled'=>'1',
+        'announcement_text'=>'Ankara’da 15:00’a kadar uygun siparişlerde aynı gün teslimat',
+        'active_theme'=>'standard',
+        'theme_auto_schedule'=>'1',
+        'theme_accent_color'=>'#ff6000',
+        'banner_autoplay'=>'1',
+        'banner_interval'=>'5500',
+        'company_name'=>'Yıldız Ofis Kırtasiye',
+        'company_email'=>'info@topluca.net',
+        'company_phone'=>'',
+        'company_address'=>'Ankara',
         'footer_description'=>'Kırtasiye, kitap, teknoloji ve ofis ihtiyaçlarını tek sepette buluşturan alışveriş platformu.',
-        'bank_name'=>'Demo Bankası','bank_account_name'=>'Yıldız Ofis Kırtasiye','bank_iban'=>'TR00 0000 0000 0000 0000 0000 00','bank_branch'=>'Ankara Merkez',
+        'bank_name'=>'Demo Bankası',
+        'bank_account_name'=>'Yıldız Ofis Kırtasiye',
+        'bank_iban'=>'TR00 0000 0000 0000 0000 0000 00',
+        'bank_branch'=>'Ankara Merkez',
         'bank_payment_note'=>'Havale/EFT açıklamasına sipariş numaranızı yazınız.',
-        'free_shipping_limit'=>'750','same_day_enabled'=>'1','same_day_cutoff'=>'15:00','same_day_free_limit'=>'2000','same_day_under_limit_fee'=>'149.90','same_day_allow_paid_under_limit'=>'1','same_day_daily_capacity'=>'50','same_day_weekdays'=>'1,2,3,4,5,6'
+        'free_shipping_limit'=>'500',
+        'same_day_enabled'=>'1',
+        'same_day_cutoff'=>'15:00',
+        'same_day_free_limit'=>'2000',
+        'same_day_under_limit_fee'=>'149.90',
+        'same_day_allow_paid_under_limit'=>'1',
+        'same_day_daily_capacity'=>'50',
+        'same_day_weekdays'=>'1,2,3,4,5,6'
     ];
     $st=$pdo->prepare('INSERT INTO settings(setting_key,setting_value) VALUES(?,?) ON DUPLICATE KEY UPDATE setting_value=setting_value');
     foreach($settings as $k=>$v)$st->execute([$k,$v]);
@@ -99,18 +114,15 @@ function apply_v5_schema(PDO $pdo): void{
         ['superadmin','Süper Yönetici',['*']],
         ['operations','Operasyon',['orders','customers','shipping','stock']],
         ['catalog','Katalog',['products','categories','brands','banners']],
-        ['marketing','Pazarlama',['campaigns','banners','themes','analytics']]
+        ['marketing','Pazarlama',['campaigns','banners','themes','analytics']],
     ];
     $r=$pdo->prepare('INSERT INTO admin_roles(role_key,name,permissions_json,is_system,created_at,updated_at) VALUES(?,?,?,1,NOW(),NOW()) ON DUPLICATE KEY UPDATE name=VALUES(name),permissions_json=VALUES(permissions_json),updated_at=NOW()');
     foreach($roles as $row)$r->execute([$row[0],$row[1],json_encode($row[2],JSON_UNESCAPED_UNICODE)]);
 
-    $superRole=(int)$pdo->query("SELECT id FROM admin_roles WHERE role_key='superadmin' LIMIT 1")->fetchColumn();
-    if($superRole)$pdo->exec('UPDATE admins SET role_id='.$superRole." WHERE role='superadmin' AND role_id IS NULL");
-
     $features=[
         ['⚡','Ankara’da Aynı Gün','Adres ve sepete göre otomatik uygunluk kontrolü',null,1],
         ['▤','Toplu Alım Avantajı','Adet arttıkça otomatik kademeli fiyat',null,2],
-        ['⌕','Akıllı Arama & Filtre','Barkod, ISBN, marka ve kategoriye göre gelişmiş arama',null,3]
+        ['⌕','Akıllı Arama & Filtre','Barkod, ISBN, marka ve kategoriye göre gelişmiş arama',null,3],
     ];
     if((int)$pdo->query('SELECT COUNT(*) FROM homepage_feature_boxes')->fetchColumn()===0){
         $f=$pdo->prepare('INSERT INTO homepage_feature_boxes(icon,title,subtitle,link_url,sort_order,is_active,created_at,updated_at) VALUES(?,?,?,?,?,1,NOW(),NOW())');
@@ -123,5 +135,13 @@ function apply_v5_schema(PDO $pdo): void{
         $s->execute(['29 Ekim Cumhuriyet Bayramı','republic',$year.'-10-27 00:00:00',$year.'-10-30 23:59:59',100]);
         $s->execute(['Kış Teması','winter',$year.'-12-01 00:00:00',($year+1).'-02-28 23:59:59',10]);
         $s->execute(['Yaz Teması','summer',($year+1).'-06-01 00:00:00',($year+1).'-08-31 23:59:59',10]);
+    }
+
+    if((int)$pdo->query('SELECT COUNT(*) FROM content_pages')->fetchColumn()===0){
+        $p=$pdo->prepare('INSERT INTO content_pages(title,slug,body,meta_title,meta_description,is_active,created_at,updated_at) VALUES(?,?,?,?,?,1,NOW(),NOW())');
+        $p->execute(['Hakkımızda','hakkimizda','TOPLUCA hakkında kurumsal metni WebYönet > İçerik Sayfaları bölümünden düzenleyebilirsiniz.','Hakkımızda | TOPLUCA','TOPLUCA hakkında kurumsal bilgiler.']);
+        $p->execute(['KVKK','kvkk','KVKK aydınlatma metnini kurumunuza ve veri işleme süreçlerinize göre WebYönet üzerinden ekleyiniz.','KVKK | TOPLUCA','TOPLUCA KVKK bilgilendirme sayfası.']);
+        $p->execute(['Gizlilik','gizlilik','Gizlilik politikasını kurumunuzun gerçek süreçlerine göre WebYönet üzerinden düzenleyiniz.','Gizlilik | TOPLUCA','TOPLUCA gizlilik politikası.']);
+        $p->execute(['Mesafeli Satış','mesafeli-satis','Mesafeli satış sözleşmesini işletmenizin gerçek ticari ve hukuki bilgilerine göre WebYönet üzerinden düzenleyiniz.','Mesafeli Satış | TOPLUCA','TOPLUCA mesafeli satış sözleşmesi.']);
     }
 }

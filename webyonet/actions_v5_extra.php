@@ -2,10 +2,27 @@
 declare(strict_types=1);
 if($_SERVER['REQUEST_METHOD']!=='POST')return;
 $action=$_POST['action']??'';
-$actions=['save_content_page_v5','delete_content_page_v5','save_search_synonym_v5','delete_search_synonym_v5','save_admin_v5','toggle_admin_v5'];
+$actions=['save_site_identity_51','save_content_page_v5','delete_content_page_v5','save_search_synonym_v5','delete_search_synonym_v5','save_admin_v5','toggle_admin_v5'];
 if(!in_array($action,$actions,true))return;
 csrf_check();
 try{
+    if($action==='save_site_identity_51'){
+        $logo=trim((string)setting('site_logo',''));$favicon=trim((string)setting('site_favicon',''));$og=trim((string)setting('site_og_image',''));
+        if(!empty($_FILES['site_logo']['name']))$logo=upload_image($_FILES['site_logo'],'site',10)?:$logo;
+        if(!empty($_FILES['site_favicon']['name']))$favicon=upload_image($_FILES['site_favicon'],'site',4)?:$favicon;
+        if(!empty($_FILES['site_og_image']['name']))$og=upload_image($_FILES['site_og_image'],'site',10)?:$og;
+        $accent=trim($_POST['theme_accent_color']??'#ff6000');if(!preg_match('/^#[0-9a-fA-F]{6}$/',$accent))$accent='#ff6000';
+        $pairs=[
+            'site_title'=>trim($_POST['site_title']??''),'site_description'=>trim($_POST['site_description']??''),'site_keywords'=>trim($_POST['site_keywords']??''),
+            'site_logo'=>$logo,'site_favicon'=>$favicon,'site_og_image'=>$og,
+            'announcement_enabled'=>!empty($_POST['announcement_enabled'])?'1':'0','announcement_text'=>trim($_POST['announcement_text']??''),
+            'theme_accent_color'=>$accent,'banner_autoplay'=>!empty($_POST['banner_autoplay'])?'1':'0','banner_interval'=>(string)max(2500,min(12000,(int)($_POST['banner_interval']??5500))),
+            'company_name'=>trim($_POST['company_name']??''),'company_email'=>trim($_POST['company_email']??''),'company_phone'=>trim($_POST['company_phone']??''),'company_address'=>trim($_POST['company_address']??''),'footer_description'=>trim($_POST['footer_description']??''),
+            'bank_name'=>trim($_POST['bank_name']??''),'bank_account_name'=>trim($_POST['bank_account_name']??''),'bank_iban'=>trim($_POST['bank_iban']??''),'bank_branch'=>trim($_POST['bank_branch']??''),'bank_payment_note'=>trim($_POST['bank_payment_note']??'')
+        ];
+        foreach($pairs as $k=>$v)set_setting($k,(string)$v);
+        admin_log('site_identity_update','settings',null,'Site kimliği, logo, SEO, duyuru ve Havale/EFT ayarları güncellendi.');flash('success','Site kimliği, logo, SEO, duyuru ve ödeme ayarları kaydedildi.');redirect_to('webyonet/?page=settings');
+    }
     if($action==='save_content_page_v5'){
         $id=(int)($_POST['id']??0);$title=trim($_POST['title']??'');if($title==='')throw new RuntimeException('Sayfa başlığı zorunludur.');$slug=trim($_POST['slug']??'')?:slugify($title);$body=trim($_POST['body']??'');$metaTitle=trim($_POST['meta_title']??'')?:null;$metaDescription=trim($_POST['meta_description']??'')?:null;$active=!empty($_POST['is_active'])?1:0;
         if($id){db()->prepare('UPDATE content_pages SET title=?,slug=?,body=?,meta_title=?,meta_description=?,is_active=?,updated_at=NOW() WHERE id=?')->execute([$title,$slug,$body,$metaTitle,$metaDescription,$active,$id]);}

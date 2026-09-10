@@ -1,185 +1,120 @@
 <?php
-declare(strict_types=1);
 require __DIR__.'/app/bootstrap.php';
-require __DIR__.'/app/checkout.php';
 
 $items=cart_items();
-if(!$items) redirect('cart.php');
+if(!$items)redirect_to('cart.php');
 $subtotal=cart_subtotal();
 $step=$_GET['step']??'address';
-$allowedSteps=['address','shipping','payment','review'];
-if(!in_array($step,$allowedSteps,true))$step='address';
-$error='';
+$allowed=['address','delivery','payment','review'];
+if(!in_array($step,$allowed,true))$step='address';
+
+function checkout_redirect(string $step): void{redirect_to('checkout.php?step='.$step);}
+function checkout_save_user_address(array $address): void{
+    if(!user_id()||empty($address['save_address']))return;
+    $s=db()->prepare('SELECT COUNT(*) FROM user_addresses WHERE user_id=? AND city=? AND district=? AND address=?');
+    $s->execute([user_id(),$address['city'],$address['district'],$address['address']]);
+    if((int)$s->fetchColumn()>0)return;
+    $hasDefault=db()->prepare('SELECT COUNT(*) FROM user_addresses WHERE user_id=?');$hasDefault->execute([user_id()]);$default=(int)$hasDefault->fetchColumn()===0?1:0;
+    db()->prepare('INSERT INTO user_addresses(user_id,title,first_name,last_name,phone,company,tax_office,tax_no,city,district,neighborhood,address,postal_code,is_default_shipping,is_default_billing,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW(),NOW())')->execute([
+        user_id(),$address['title']?:'Adresim',$address['first_name'],$address['last_name'],$address['phone'],$address['billing_type']==='corporate'?$address['company']:null,$address['billing_type']==='corporate'?$address['tax_office']:null,$address['billing_type']==='corporate'?$address['tax_no']:null,$address['city'],$address['district'],$address['neighborhood']?:null,$address['address'],$address['postal_code']?:null,$default,$default
+    ]);
+}
 
 if($_SERVER['REQUEST_METHOD']==='POST'){
     csrf_check();
     $action=$_POST['action']??'';
-
-    if($action==='save_address'){
-        $first=trim($_POST['first_name']??'');
-        $last=trim($_POST['last_name']??'');
-        $email=trim($_POST['email']??'');
-        $phone=trim($_POST['phone']??'');
-        $city=trim($_POST['city']??'');
-        $district=trim($_POST['district']??'');
-        $neighborhood=trim($_POST['neighborhood']??'');
-        $address=trim($_POST['address']??'');
-        $postal=trim($_POST['postal_code']??'');
-        $invoiceType=$_POST['invoice_type']??'individual';
-        $company=trim($_POST['company']??'');
-        $taxOffice=trim($_POST['tax_office']??'');
-        $taxNo=trim($_POST['tax_no']??'');
-        if(!$first||!$last||!filter_var($email,FILTER_VALIDATE_EMAIL)||!$phone||!$city||!$district||!$address){
-            $error='Lütfen zorunlu teslimat bilgilerini eksiksiz doldurun.';
-        } elseif($invoiceType==='company' && (!$company||!$taxOffice||!$taxNo)) {
-            $error='Kurumsal fatura için firma, vergi dairesi ve vergi numarası zorunludur.';
-        } else {
-            checkout_set('address',compact('first','last','email','phone','city','district','neighborhood','address','postal','invoiceType','company','taxOffice','taxNo'));
-            unset($_SESSION['checkout']['shipping']);
-            redirect('checkout.php?step=shipping');
+    try{
+        if($action==='save_address'){
+            $address=[
+                'title'=>trim($_POST['title']??'Adresim'),
+                'first_name'=>trim($_POST['first_name']??''),'last_name'=>trim($_POST['last_name']??''),
+                'email'=>trim($_POST['email']??''),'phone'=>trim($_POST['phone']??''),
+                'city'=>trim($_POST['city']??''),'district'=>trim($_POST['district']??''),
+                'neighborhood'=>trim($_POST['neighborhood']??''),'postal_code'=>trim($_POST['postal_code']??''),
+                'address'=>trim($_POST['address']??''),'billing_type'=>$_POST['billing_type']??'individual',
+                'company'=>trim($_POST['company']??''),'tax_office'=>trim($_POST['tax_office']??''),'tax_no'=>trim($_POST['tax_no']??''),
+                'save_address'=>!empty($_POST['save_address'])?1:0
+            ];
+            foreach(['first_name','last_name','email','phone','city','district','address'] as $required)if($address[$required]==='')throw new RuntimeException('Lütfen zorunlu adres ve iletişim alanlarını doldurun.');
+            if(!filter_var($address['email'],FILTER_VALIDATE_EMAIL))throw new RuntimeException('Geçerli bir e-posta adresi girin.');
+            if($address['billing_type']==='corporate'&&($address['company']===''||$address['tax_office']===''||$address['tax_no']===''))throw new RuntimeException('Kurumsal fatura için firma, vergi dairesi ve vergi numarası zorunludur.');
+            $_SESSION['checkout_address']=$address;
+            unset($_SESSION['checkout_shipping'],$_SESSION['checkout_payment']);
+            checkout_redirect('delivery');
         }
-    }
-
-    if($action==='save_shipping'){
-        $address=checkout_data()['address']??null;
-        if(!$address) redirect('checkout.php?step=address');
-        $method=$_POST['shipping_method']??'';
-        $same=same_day_status($address,$items,$subtotal);
-        $standard=standard_shipping_options($subtotal);
-        $selected=null;
-        if($method==='same_day'){
-            if(!$same['eligible']) $error='Aynı gün teslimat bu adres/sepet için kullanılamıyor.';
-            else $selected=['method'=>'same_day','code'=>'same_day','name'=>'TOPLUCA Ankara Aynı Gün','price'=>(float)$same['fee']];
-        } elseif(str_starts_with($method,'carrier:')) {
-            $id=(int)substr($method,8);
-            foreach($standard as $c){ if((int)$c['id']===$id){$selected=['method'=>'cargo','code'=>'carrier_'.$id,'name'=>$c['name'],'price'=>(float)$c['calculated_price'],'carrier_id'=>$id];break;} }
-            if(!$selected)$error='Geçerli bir kargo seçeneği seçin.';
-        } else $error='Teslimat seçeneği seçin.';
-        if(!$error){ checkout_set('shipping',$selected); redirect('checkout.php?step=payment'); }
-    }
-
-    if($action==='save_payment'){
-        if(empty(checkout_data()['shipping'])) redirect('checkout.php?step=shipping');
-        $payment=$_POST['payment_method']??'bank_transfer';
-        if(!in_array($payment,['bank_transfer','cash_on_delivery'],true))$payment='bank_transfer';
-        checkout_set('payment',['method'=>$payment]);
-        checkout_set('customer_note',trim($_POST['customer_note']??''));
-        redirect('checkout.php?step=review');
-    }
-
-    if($action==='place_order'){
-        $data=checkout_data();
-        if(empty($data['address']))redirect('checkout.php?step=address');
-        if(empty($data['shipping']))redirect('checkout.php?step=shipping');
-        if(empty($data['payment']))redirect('checkout.php?step=payment');
-        $a=$data['address'];$sh=$data['shipping'];$pay=$data['payment'];
-        // Revalidate same-day at the last possible moment.
-        if($sh['method']==='same_day'){
-            $same=same_day_status($a,$items,$subtotal);
-            if(!$same['eligible']){
-                unset($_SESSION['checkout']['shipping']);
-                flash('error','Aynı gün teslimat uygunluğu değişti. Lütfen teslimat yöntemini yeniden seçin.');
-                redirect('checkout.php?step=shipping');
-            }
-            $sh['price']=(float)$same['fee'];
+        if($action==='save_delivery'){
+            $address=$_SESSION['checkout_address']??null;
+            if(!$address)checkout_redirect('address');
+            $selection=shipping_selection_from_code((string)($_POST['shipping_code']??''),$subtotal,$address,$items);
+            if(!$selection)throw new RuntimeException('Seçtiğiniz teslimat yöntemi artık uygun değil. Lütfen tekrar seçim yapın.');
+            $_SESSION['checkout_shipping']=$selection;
+            checkout_redirect('payment');
         }
-        try{
-            db()->beginTransaction();
-            // Lock products and verify stock.
-            foreach($items as $i){
-                $s=db()->prepare('SELECT stock,sale_price,purchase_price,vat_rate FROM products WHERE id=? FOR UPDATE');
-                $s->execute([(int)$i['id']]);$live=$s->fetch();
-                if(!$live || (int)$live['stock']<(int)$i['quantity']) throw new RuntimeException($i['name'].' için yeterli stok bulunmuyor.');
-            }
-            $orderNo='TPL'.date('ymd').strtoupper(substr(bin2hex(random_bytes(4)),0,6));
-            $shipping=(float)$sh['price'];$total=$subtotal+$shipping;
-            $customerName=trim($a['first'].' '.$a['last']);
-            $s=db()->prepare("INSERT INTO orders(order_no,user_id,customer_name,customer_email,customer_phone,city,district,address,billing_same_as_shipping,billing_company,billing_tax_office,billing_tax_no,subtotal,shipping_total,grand_total,delivery_method,shipping_method_code,shipping_company_name,payment_method,customer_note,status,created_at,updated_at) VALUES(?,NULL,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?,'new',NOW(),NOW())");
-            $s->execute([$orderNo,$customerName,$a['email'],$a['phone'],$a['city'],$a['district'],$a['address'],$a['company']?:null,$a['taxOffice']?:null,$a['taxNo']?:null,$subtotal,$shipping,$total,$sh['method'],$sh['code'],$sh['name'],$pay['method'],$data['customer_note']??'']);
-            $oid=(int)db()->lastInsertId();
-            foreach($items as $i){
-                $s=db()->prepare('SELECT stock,sale_price,purchase_price,vat_rate FROM products WHERE id=? FOR UPDATE');$s->execute([(int)$i['id']]);$live=$s->fetch();
-                $qty=(int)$i['quantity'];$unit=(float)$live['sale_price'];$line=$unit*$qty;
-                $s=db()->prepare('INSERT INTO order_items(order_id,product_id,product_name,sku,quantity,unit_price,unit_cost,vat_rate,discount_total,line_total) VALUES(?,?,?,?,?,?,?,?,0,?)');
-                $s->execute([$oid,$i['id'],$i['name'],$i['sku'],$qty,$unit,$live['purchase_price'],$live['vat_rate'],$line]);
-                db()->prepare('UPDATE products SET stock=stock-?,sales_count=sales_count+? WHERE id=?')->execute([$qty,$qty,$i['id']]);
-                db()->prepare("INSERT INTO stock_movements(product_id,movement_type,quantity,unit_cost,reference_type,reference_id,notes,created_at) VALUES(?,'sale',?,?, 'order',?, ?,NOW())")->execute([$i['id'],-$qty,$live['purchase_price'],$oid,'Sipariş '.$orderNo]);
-            }
-            db()->prepare("INSERT INTO order_status_history(order_id,status,note,created_at) VALUES(?,'new','Sipariş oluşturuldu',NOW())")->execute([$oid]);
-            db()->prepare('UPDATE carts SET customer_email=?,converted_order_id=?,subtotal=?,updated_at=NOW() WHERE id=?')->execute([$a['email'],$oid,$subtotal,cart_id()]);
-            db()->commit();
-            $_SESSION['last_order_id']=$oid;$_SESSION['last_order_no']=$orderNo;$_SESSION['last_order_email']=$a['email'];
-            checkout_clear();
-            redirect('order-success.php');
-        }catch(Throwable $e){ if(db()->inTransaction())db()->rollBack();$error=$e->getMessage(); }
-    }
+        if($action==='save_payment'){
+            if(($_POST['payment_method']??'')!=='bank_transfer')throw new RuntimeException('Şu anda yalnızca Havale / EFT ile ödeme aktiftir.');
+            $_SESSION['checkout_payment']=['method'=>'bank_transfer'];
+            checkout_redirect('review');
+        }
+        if($action==='create_order'){
+            $address=$_SESSION['checkout_address']??null;$shipping=$_SESSION['checkout_shipping']??null;$payment=$_SESSION['checkout_payment']??null;
+            if(!$address||!$shipping||!$payment)throw new RuntimeException('Sipariş adımları tamamlanmamış.');
+            $freshShipping=shipping_selection_from_code((string)$shipping['code'],$subtotal,$address,$items);
+            if(!$freshShipping)throw new RuntimeException('Teslimat uygunluğu değişti. Lütfen teslimat adımını tekrar kontrol edin.');
+            $shipping=$freshShipping;$grand=round($subtotal+(float)$shipping['fee'],2);$pdo=db();$pdo->beginTransaction();
+            try{
+                foreach($items as $item){
+                    $lock=$pdo->prepare('SELECT stock,purchase_price,is_active FROM products WHERE id=? FOR UPDATE');$lock->execute([(int)$item['id']]);$row=$lock->fetch();
+                    if(!$row||(int)$row['is_active']!==1||(int)$row['stock']<(int)$item['quantity'])throw new RuntimeException($item['name'].' için yeterli stok kalmadı.');
+                }
+                do{$orderNo='TPL-'.date('ymd').'-'.strtoupper(substr(bin2hex(random_bytes(5)),0,8));$q=$pdo->prepare('SELECT COUNT(*) FROM orders WHERE order_no=?');$q->execute([$orderNo]);}while((int)$q->fetchColumn()>0);
+                $claimToken=null;$claimHash=null;$claimExp=null;
+                if(!user_id()){$claimToken=bin2hex(random_bytes(32));$claimHash=hash('sha256',$claimToken);$claimExp=date('Y-m-d H:i:s',time()+86400*7);}
+                $customerName=trim($address['first_name'].' '.$address['last_name']);
+                $billSame=$address['billing_type']==='individual'?1:0;$company=$address['billing_type']==='corporate'?$address['company']:null;$taxOffice=$address['billing_type']==='corporate'?$address['tax_office']:null;$taxNo=$address['billing_type']==='corporate'?$address['tax_no']:null;$companyId=$shipping['company_id']??null;
+                $st=$pdo->prepare('INSERT INTO orders(order_no,user_id,customer_name,customer_email,customer_phone,city,district,neighborhood,address,billing_same_as_shipping,billing_company,billing_tax_office,billing_tax_no,subtotal,discount_total,shipping_total,grand_total,delivery_method,shipping_company_id,shipping_company_name,payment_method,payment_status,status,account_claim_token_hash,account_claim_expires_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?,?,?,?,?,?,?,?,?,NOW(),NOW())');
+                $st->execute([$orderNo,user_id(),$customerName,$address['email'],$address['phone'],$address['city'],$address['district'],$address['neighborhood']?:null,$address['address'],$billSame,$company,$taxOffice,$taxNo,$subtotal,(float)$shipping['fee'],$grand,$shipping['code']==='same_day'?'same_day':'cargo',$companyId,$shipping['name'],'bank_transfer','pending','new',$claimHash,$claimExp]);
+                $orderId=(int)$pdo->lastInsertId();
+                foreach($items as $item){
+                    $price=unit_price($item,(int)$item['quantity']);$line=round($price*(int)$item['quantity'],2);
+                    $pdo->prepare('INSERT INTO order_items(order_id,product_id,product_name,sku,quantity,unit_price,unit_cost,vat_rate,discount_total,line_total) VALUES(?,?,?,?,?,?,?,?,0,?)')->execute([$orderId,$item['id'],$item['name'],$item['sku'],$item['quantity'],$price,$item['purchase_price'],$item['vat_rate'],$line]);
+                    $pdo->prepare('UPDATE products SET stock=stock-?,sales_count=sales_count+? WHERE id=?')->execute([$item['quantity'],$item['quantity'],$item['id']]);
+                    $pdo->prepare("INSERT INTO stock_movements(product_id,movement_type,quantity,unit_cost,reference_type,reference_id,notes,created_at) VALUES(?,'sale',?,?,'order',?,'Online sipariş',NOW())")->execute([$item['id'],-1*(int)$item['quantity'],$item['purchase_price'],$orderId]);
+                }
+                $pdo->prepare("INSERT INTO order_status_history(order_id,status,note,created_at) VALUES(?,'new','Sipariş oluşturuldu',NOW())")->execute([$orderId]);
+                $pdo->prepare("INSERT INTO payments(order_id,provider,amount,status,notes,created_at,updated_at) VALUES(?,'bank_transfer',?,'pending','Havale/EFT bekleniyor',NOW(),NOW())")->execute([$orderId,$grand]);
+                $pdo->prepare('UPDATE carts SET converted_order_id=?,customer_email=?,subtotal=?,updated_at=NOW() WHERE id=?')->execute([$orderId,$address['email'],$subtotal,cart_id()]);
+                $pdo->commit();
+                checkout_save_user_address($address);
+                $_SESSION['last_order']=['id'=>$orderId,'no'=>$orderNo,'claim_token'=>$claimToken];
+                unset($_SESSION['checkout_address'],$_SESSION['checkout_shipping'],$_SESSION['checkout_payment']);
+                redirect_to('order-success.php');
+            }catch(Throwable $e){if($pdo->inTransaction())$pdo->rollBack();throw $e;}
+        }
+    }catch(Throwable $e){flash('error',$e->getMessage());checkout_redirect($step);}
 }
 
-$data=checkout_data();
-if($step!=='address' && empty($data['address']))redirect('checkout.php?step=address');
-if(in_array($step,['payment','review'],true) && empty($data['shipping']))redirect('checkout.php?step=shipping');
-if($step==='review' && empty($data['payment']))redirect('checkout.php?step=payment');
-$address=$data['address']??[];
-$shipping=$data['shipping']??[];
-$payment=$data['payment']??[];
-$same=$address?same_day_status($address,$items,$subtotal):null;
-$standard=$address?standard_shipping_options($subtotal):[];
-$pageTitle='Siparişi Tamamla | TOPLUCA';
+$address=$_SESSION['checkout_address']??null;$shipping=$_SESSION['checkout_shipping']??null;$payment=$_SESSION['checkout_payment']??null;
+if($step!=='address'&&!$address)checkout_redirect('address');if(in_array($step,['payment','review'],true)&&!$shipping)checkout_redirect('delivery');if($step==='review'&&!$payment)checkout_redirect('payment');
+$same=$address?same_day_quote($address,$items,$subtotal):null;$cargo=standard_shipping_options($subtotal);
+$pageTitle='Siparişi Tamamla | TOPLUCA';$pageDescription='Teslimat adresi, kargo ve Havale/EFT ödeme adımlarını güvenli biçimde tamamlayın.';
 require __DIR__.'/includes/header.php';
 ?>
-<section class="checkout-shell">
-<div class="container">
-    <div class="checkout-top">
-        <div><span class="eyebrow">GÜVENLİ ÖDEME</span><h1>Siparişi Tamamla</h1><p>Adres → Teslimat → Ödeme → Onay</p></div>
-        <div class="checkout-steps">
-            <?php foreach(['address'=>'1 Adres','shipping'=>'2 Teslimat','payment'=>'3 Ödeme','review'=>'4 Onay'] as $k=>$label):?>
-                <a class="step-chip <?=$step===$k?'active':''?>" href="<?=checkout_step_url($k)?>"><?=h($label)?></a>
-            <?php endforeach;?>
-        </div>
-    </div>
-    <?php if($error):?><div class="checkout-alert error"><?=h($error)?></div><?php endif;?>
-    <div class="checkout-grid">
-        <section class="checkout-card">
-        <?php if($step==='address'):?>
-            <div class="checkout-card-head"><div><span class="step-no">1</span><h2>Teslimat ve fatura bilgileri</h2></div><p>Önce adresinizi belirleyelim. Teslimat seçenekleri bu adrese göre hesaplanır.</p></div>
-            <form method="post" class="checkout-form-v2"><?=csrf_field()?><input type="hidden" name="action" value="save_address">
-                <div class="field-grid two"><label>Ad *<input name="first_name" required value="<?=h($address['first']??'')?>"></label><label>Soyad *<input name="last_name" required value="<?=h($address['last']??'')?>"></label></div>
-                <div class="field-grid two"><label>E-posta *<input type="email" name="email" required value="<?=h($address['email']??'')?>"></label><label>Telefon *<input name="phone" required value="<?=h($address['phone']??'')?>"></label></div>
-                <div class="field-grid two"><label>İl *<input name="city" required placeholder="Örn. Ankara" value="<?=h($address['city']??'')?>"></label><label>İlçe *<input name="district" required placeholder="Örn. Çankaya" value="<?=h($address['district']??'')?>"></label></div>
-                <div class="field-grid two"><label>Mahalle<input name="neighborhood" value="<?=h($address['neighborhood']??'')?>"></label><label>Posta Kodu<input name="postal_code" value="<?=h($address['postal']??'')?>"></label></div>
-                <label>Açık Adres *<textarea name="address" rows="4" required><?=h($address['address']??'')?></textarea></label>
-                <div class="invoice-switch"><label><input type="radio" name="invoice_type" value="individual" <?=($address['invoiceType']??'individual')==='individual'?'checked':''?>> Bireysel fatura</label><label><input type="radio" name="invoice_type" value="company" <?=($address['invoiceType']??'')==='company'?'checked':''?>> Kurumsal fatura</label></div>
-                <div class="field-grid three invoice-company"><label>Firma<input name="company" value="<?=h($address['company']??'')?>"></label><label>Vergi Dairesi<input name="tax_office" value="<?=h($address['taxOffice']??'')?>"></label><label>Vergi No<input name="tax_no" value="<?=h($address['taxNo']??'')?>"></label></div>
-                <button class="checkout-primary">Teslimat Seçeneklerine İlerle →</button>
-            </form>
-        <?php elseif($step==='shipping'):?>
-            <div class="checkout-card-head"><div><span class="step-no">2</span><h2>Teslimat yöntemi</h2></div><p><?=h(($address['city']??'').' / '.($address['district']??''))?> adresine uygun seçenekler.</p></div>
-            <div class="address-summary"><div><strong><?=h(($address['first']??'').' '.($address['last']??''))?></strong><span><?=h($address['address']??'')?>, <?=h($address['district']??'')?> / <?=h($address['city']??'')?></span></div><a href="<?=checkout_step_url('address')?>">Adresi değiştir</a></div>
-            <form method="post"><?=csrf_field()?><input type="hidden" name="action" value="save_shipping"><div class="shipping-choice-list">
-                <?php if($same && $same['eligible']):?>
-                <label class="shipping-choice premium"><input type="radio" name="shipping_method" value="same_day" required><span class="shipping-icon">⚡</span><span class="shipping-main"><b>TOPLUCA Ankara Aynı Gün</b><small>Bugün teslim • Son sipariş <?=h($same['cutoff'])?></small><?php if($same['remaining']>0):?><em><?=money($same['remaining'])?> daha ekleyin, aynı gün teslimat ücretsiz olsun.</em><?php else:?><em>Ücretsiz aynı gün teslimat hakkınız aktif.</em><?php endif;?></span><strong><?=$same['fee']>0?money($same['fee']):'Ücretsiz'?></strong></label>
-                <?php else:?>
-                <div class="shipping-unavailable"><b>Ankara Aynı Gün Teslimat</b><span>Bu sipariş için kullanılamıyor.</span><?php if($same)foreach($same['reasons'] as $r):?><small>• <?=h($r)?></small><?php endforeach;?></div>
-                <?php endif;?>
-                <?php foreach($standard as $c):?>
-                <label class="shipping-choice"><input type="radio" name="shipping_method" value="carrier:<?=(int)$c['id']?>" required><span class="shipping-icon">🚚</span><span class="shipping-main"><b><?=h($c['name'])?></b><small>Standart gönderim • Sipariş sonrası takip numarası</small></span><strong><?=$c['calculated_price']>0?money($c['calculated_price']):'Ücretsiz'?></strong></label>
-                <?php endforeach;?>
-            </div><button class="checkout-primary">Ödemeye İlerle →</button></form>
-        <?php elseif($step==='payment'):?>
-            <div class="checkout-card-head"><div><span class="step-no">3</span><h2>Ödeme yöntemi</h2></div><p>Ödeme sağlayıcısı bağlanana kadar güvenli manuel seçenekler aktif.</p></div>
-            <form method="post"><?=csrf_field()?><input type="hidden" name="action" value="save_payment">
-                <div class="payment-choice-list"><label class="payment-choice"><input type="radio" name="payment_method" value="bank_transfer" checked><span>🏦</span><div><b>Havale / EFT</b><small>Siparişinizi oluşturun, ödeme bilgisini sipariş ekranında görün.</small></div></label><label class="payment-choice muted"><input type="radio" name="payment_method" value="cash_on_delivery"><span>📦</span><div><b>Kapıda ödeme</b><small>Yönetimden aktif edilen gönderilerde kullanılabilir.</small></div></label></div>
-                <label>Sipariş notu<textarea name="customer_note" rows="3" placeholder="Teslimatla ilgili bir notunuz varsa yazabilirsiniz."><?=h($data['customer_note']??'')?></textarea></label>
-                <button class="checkout-primary">Siparişi Kontrol Et →</button>
-            </form>
-        <?php else:?>
-            <div class="checkout-card-head"><div><span class="step-no">4</span><h2>Son kontrol</h2></div><p>Siparişi oluşturmadan önce tüm bilgileri kontrol edin.</p></div>
-            <div class="review-box"><div><span>Teslimat adresi</span><b><?=h(($address['first']??'').' '.($address['last']??''))?></b><p><?=h($address['address']??'')?>, <?=h($address['district']??'')?> / <?=h($address['city']??'')?></p><a href="<?=checkout_step_url('address')?>">Düzenle</a></div><div><span>Teslimat</span><b><?=h($shipping['name']??'')?></b><p><?=$shipping['price']??0?money($shipping['price']):'Ücretsiz'?></p><a href="<?=checkout_step_url('shipping')?>">Düzenle</a></div><div><span>Ödeme</span><b><?=($payment['method']??'')==='bank_transfer'?'Havale / EFT':'Kapıda ödeme'?></b><a href="<?=checkout_step_url('payment')?>">Düzenle</a></div></div>
-            <form method="post"><?=csrf_field()?><input type="hidden" name="action" value="place_order"><label class="terms"><input type="checkbox" required> Ön bilgilendirme ve mesafeli satış koşullarını okudum ve kabul ediyorum.</label><button class="checkout-primary big">Siparişi Oluştur ve Tamamla</button></form>
-        <?php endif;?>
-        </section>
-        <aside class="checkout-summary-v2"><h3>Sipariş Özeti</h3><div class="summary-items"><?php foreach($items as $i):?><div class="summary-item"><span><b><?=h($i['name'])?></b><small><?=h($i['brand_name'])?> • <?=intval($i['quantity'])?> adet</small></span><strong><?=money($i['line_total'])?></strong></div><?php endforeach;?></div><div class="summary-line"><span>Ürünler</span><strong><?=money($subtotal)?></strong></div><?php if($shipping):?><div class="summary-line"><span>Teslimat</span><strong><?=($shipping['price']??0)>0?money($shipping['price']):'Ücretsiz'?></strong></div><?php endif;?><div class="summary-total"><span>Toplam</span><strong><?=money($subtotal+(float)($shipping['price']??0))?></strong></div><div class="summary-security">🔒 Güvenli oturum<br><small>Adres ve sipariş bilgileriniz şifreli bağlantı üzerinden işlenir.</small></div></aside>
-    </div>
+<section class="checkout-page"><div class="container checkout-shell">
+<div class="checkout-steps"><?php foreach(['address'=>['1','Adres'],'delivery'=>['2','Teslimat'],'payment'=>['3','Ödeme'],'review'=>['4','Son Kontrol']] as $key=>$meta):?><div class="step <?=$step===$key?'active':''?>"><b><?=$meta[0]?></b><span><?=$meta[1]?></span></div><?php endforeach;?></div>
+<div class="checkout-grid"><div class="checkout-card">
+<?php if($step==='address'):?>
+<h2>Teslimat bilgileri</h2><p>Kargo ve Ankara aynı gün seçeneklerini gösterebilmemiz için önce teslimat adresinizi girin.</p>
+<form method="post"><?=csrf_field()?><input type="hidden" name="action" value="save_address"><div class="form-grid"><?php $u=current_user();?><div class="field"><label>Adres Başlığı</label><input name="title" value="<?=h($address['title']??'Adresim')?>"></div><div class="field"></div><div class="field"><label>Ad *</label><input name="first_name" required value="<?=h($address['first_name']??($u['first_name']??''))?>"></div><div class="field"><label>Soyad *</label><input name="last_name" required value="<?=h($address['last_name']??($u['last_name']??''))?>"></div><div class="field"><label>E-posta *</label><input type="email" name="email" required value="<?=h($address['email']??($u['email']??''))?>"></div><div class="field"><label>Telefon *</label><input name="phone" required value="<?=h($address['phone']??($u['phone']??''))?>"></div><div class="field"><label>İl *</label><input name="city" required placeholder="Örn. Ankara" value="<?=h($address['city']??'')?>"></div><div class="field"><label>İlçe *</label><input name="district" required placeholder="Örn. Çankaya" value="<?=h($address['district']??'')?>"></div><div class="field"><label>Mahalle</label><input name="neighborhood" value="<?=h($address['neighborhood']??'')?>"></div><div class="field"><label>Posta Kodu</label><input name="postal_code" value="<?=h($address['postal_code']??'')?>"></div><div class="field full"><label>Açık Adres *</label><textarea name="address" required><?=h($address['address']??'')?></textarea></div><div class="field"><label>Fatura Tipi</label><select name="billing_type"><option value="individual" <?=($address['billing_type']??'individual')==='individual'?'selected':''?>>Bireysel</option><option value="corporate" <?=($address['billing_type']??'')==='corporate'?'selected':''?>>Kurumsal</option></select></div><div class="field"><label>Firma</label><input name="company" value="<?=h($address['company']??'')?>"></div><div class="field"><label>Vergi Dairesi</label><input name="tax_office" value="<?=h($address['tax_office']??'')?>"></div><div class="field"><label>Vergi No / TCKN</label><input name="tax_no" value="<?=h($address['tax_no']??'')?>"></div><?php if(user_id()):?><div class="field full"><label class="checkout-check"><input type="checkbox" name="save_address" value="1" checked> Bu adresi hesabıma kaydet</label></div><?php endif;?></div><div class="checkout-actions"><a class="secondary-btn" href="<?=app_url('cart.php')?>">← Sepete Dön</a><button class="primary-btn">Teslimat Seçeneklerini Göster →</button></div></form>
+<?php elseif($step==='delivery'):?>
+<h2>Teslimat yöntemi</h2><p><b><?=h($address['city'].' / '.$address['district'])?></b> adresiniz için kullanılabilir seçenekler.</p>
+<form method="post"><?=csrf_field()?><input type="hidden" name="action" value="save_delivery"><?php foreach($cargo as $o):?><label class="delivery-option"><div class="delivery-option-head"><span><input type="radio" name="shipping_code" value="cargo_<?=(int)$o['id']?>" required> <strong><?=h($o['name'])?></strong></span><b><?=$o['calculated_fee']<=0?'Ücretsiz':money($o['calculated_fee'])?></b></div><small><?=h($o['estimated_days']?:'1-3 iş günü')?> · Takip numarası sipariş onayından sonra eklenir.</small></label><?php endforeach;?><label class="delivery-option <?=($same&&$same['available'])?'':'disabled'?>"><div class="delivery-option-head"><span><input type="radio" name="shipping_code" value="same_day" <?=($same&&$same['available'])?'':'disabled'?>> <strong>⚡ TOPLUCA Ankara Aynı Gün</strong></span><b><?=($same&&$same['available'])?($same['fee']<=0?'Ücretsiz':money($same['fee'])):'Kullanılamaz'?></b></div><?php if($same&&$same['available']):?><small><?=h($address['district'])?> · <?=h($same['cutoff'])?> öncesi uygun siparişlerde.</small><?php if($same['remaining']>0):?><div class="same-day-note"><?=money($same['remaining'])?> daha eklerseniz aynı gün teslimat ücretsiz olur. Şimdi seçerseniz <?=money($same['fee'])?>.</div><?php endif;?><?php else:?><small><?=h($same['reason']??'Adres bilgisi uygun değil.')?></small><?php endif;?></label><div class="checkout-actions"><a class="secondary-btn" href="<?=app_url('checkout.php?step=address')?>">← Adresi Düzenle</a><button class="primary-btn">Ödemeye Geç →</button></div></form>
+<?php elseif($step==='payment'):?>
+<h2>Ödeme yöntemi</h2><p>Şu anda Havale / EFT aktif. Kartla ödeme daha sonra ödeme kuruluşu entegrasyonuyla açılabilir.</p>
+<form method="post"><?=csrf_field()?><input type="hidden" name="action" value="save_payment"><label class="payment-option selected"><input type="radio" name="payment_method" value="bank_transfer" checked> <strong>Havale / EFT</strong><small><?=h(setting('bank_payment_note','Havale/EFT açıklamasına sipariş numaranızı yazınız.'))?></small><div class="bank-box"><b><?=h(setting('bank_name','Demo Bankası'))?></b><br><?=h(setting('bank_account_name','Yıldız Ofis Kırtasiye'))?><?php if(trim((string)setting('bank_branch',''))!==''):?><br>Şube: <?=h(setting('bank_branch',''))?><?php endif;?><br><strong>IBAN: <?=h(setting('bank_iban','TR00 0000 0000 0000 0000 0000 00'))?></strong></div></label><label class="payment-option disabled"><input type="radio" disabled> <strong>Kredi / Banka Kartı</strong><small>Şu anda aktif değil.</small></label><div class="checkout-actions"><a class="secondary-btn" href="<?=app_url('checkout.php?step=delivery')?>">← Teslimata Dön</a><button class="primary-btn">Son Kontrole Geç →</button></div></form>
+<?php else:?>
+<h2>Siparişi kontrol edin</h2><p>Sipariş oluşturulduğunda stok yeniden doğrulanır ve size benzersiz bir TOPLUCA sipariş kodu verilir.</p><div class="review-block"><h3>Teslimat Adresi</h3><div class="review-item"><span><?=h($address['first_name'].' '.$address['last_name'])?><br><?=h($address['address'])?><br><?=h($address['district'].' / '.$address['city'])?></span><a href="<?=app_url('checkout.php?step=address')?>">Düzenle</a></div></div><div class="review-block"><h3>Teslimat</h3><div class="review-item"><span><?=h($shipping['name'])?></span><b><?=$shipping['fee']<=0?'Ücretsiz':money($shipping['fee'])?></b></div></div><div class="review-block"><h3>Ödeme</h3><div class="review-item"><span>Havale / EFT</span><a href="<?=app_url('checkout.php?step=payment')?>">Düzenle</a></div></div><form method="post"><?=csrf_field()?><input type="hidden" name="action" value="create_order"><div class="checkout-actions"><a class="secondary-btn" href="<?=app_url('checkout.php?step=payment')?>">← Ödemeye Dön</a><button class="primary-btn">Siparişi Oluştur →</button></div></form>
+<?php endif;?>
 </div>
-</section>
-<?php require __DIR__.'/includes/footer.php';
+<aside class="checkout-summary"><h3>Sipariş Özeti</h3><?php foreach($items as $it):?><div class="checkout-product"><span><?=h($it['name'])?> × <?=(int)$it['quantity']?></span><b><?=money($it['line_total'])?></b></div><?php endforeach;?><div class="summary-row"><span>Ürünler</span><b><?=money($subtotal)?></b></div><?php if($shipping):?><div class="summary-row"><span>Teslimat</span><b><?=$shipping['fee']<=0?'Ücretsiz':money($shipping['fee'])?></b></div><?php endif;?><div class="summary-row total"><span>Toplam</span><span><?=money($subtotal+($shipping['fee']??0))?></span></div><div class="secure-note">🔒 Fiyat ve stok sipariş oluşturma anında tekrar doğrulanır.</div></aside>
+</div></div></section>
+<?php require __DIR__.'/includes/footer.php';?>

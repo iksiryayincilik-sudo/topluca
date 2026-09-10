@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 160" role="img" aria-label="TOPLUCA">
+  <defs><style>.word{font-family:Inter,Arial Black,Arial,sans-serif;font-size:102px;font-weight:800;letter-spacing:-7px}</style></defs>
+  <text x="8" y="112" class="word" fill="#111318">T</text>
+  <circle cx="130" cy="82" r="47" fill="#ff6000"/>
+  <circle cx="130" cy="82" r="25" fill="#fff"/>
+  <rect x="121" y="22" width="18" height="54" rx="8" fill="#ff6000"/>
+  <path d="M130 20 L118 38 L142 38 Z" fill="#111318"/>
+  <text x="180" y="112" class="word" fill="#111318">PLUC</text>
+  <text x="535" y="112" class="word" fill="#111318">A</text>
+  <path d="M542 118 C582 131 626 127 668 99" fill="none" stroke="#ff6000" stroke-width="13" stroke-linecap="round"/>
+  <path d="M658 86 L695 88 L678 119 Z" fill="#ff6000"/>
+</svg>

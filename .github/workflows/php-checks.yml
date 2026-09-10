@@ -1,0 +1,104 @@
+name: TOPLUCA V5 PHP 8.0 checks
+
+on:
+  push:
+    branches: [ "v5-professional" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  php-checks:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: topluca_test
+          MYSQL_USER: topluca
+          MYSQL_PASSWORD: topluca_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.0'
+          extensions: pdo_mysql, mbstring, fileinfo, iconv
+          coverage: none
+      - name: PHP syntax lint
+        run: |
+          find . -type f -name '*.php' -not -path './config.php' -print0 | xargs -0 -n1 php -l
+      - name: MySQL V5 schema and seed smoke test
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_NAME: topluca_test
+          DB_USER: topluca
+          DB_PASS: topluca_test
+        run: |
+          php -r '
+            require "database/schema.php";
+            require "database/schema_v5.php";
+            $pdo=new PDO("mysql:host=".getenv("DB_HOST").";port=".getenv("DB_PORT").";dbname=".getenv("DB_NAME").";charset=utf8mb4",getenv("DB_USER"),getenv("DB_PASS"),[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION]);
+            $pdo->exec("SET FOREIGN_KEY_CHECKS=0");
+            foreach(["content_pages","homepage_feature_boxes","admin_roles","theme_schedules"] as $t){$pdo->exec("DROP TABLE IF EXISTS `{$t}`");}
+            drop_topluca_tables($pdo);
+            foreach(schema_sql() as $sql){$pdo->exec($sql);}
+            seed_v4($pdo);
+            apply_v5_schema($pdo);
+            $tables=["admins","users","categories","brands","products","orders","order_items","shipping_companies","banners","homepage_sections","homepage_feature_boxes","theme_schedules","content_pages","admin_roles"];
+            foreach($tables as $table){$c=(int)$pdo->query("SELECT COUNT(*) FROM `{$table}`")->fetchColumn();echo $table.":".$c.PHP_EOL;}
+            if((int)$pdo->query("SELECT COUNT(*) FROM products")->fetchColumn()<7)throw new RuntimeException("Demo products missing");
+            if((int)$pdo->query("SELECT COUNT(*) FROM categories WHERE parent_id IS NULL")->fetchColumn()!=7)throw new RuntimeException("Main categories invalid");
+            if((int)$pdo->query("SELECT COUNT(*) FROM content_pages")->fetchColumn()<4)throw new RuntimeException("Managed pages missing");
+            if((int)$pdo->query("SELECT COUNT(*) FROM homepage_feature_boxes")->fetchColumn()<3)throw new RuntimeException("Homepage feature boxes missing");
+            $hash=$pdo->query("SELECT password_hash FROM admins WHERE username=\"emrah\"")->fetchColumn();
+            if(!$hash || !password_verify("emr321456",$hash))throw new RuntimeException("Admin seed invalid");
+          '
+      - name: Create test config
+        run: |
+          cat > config.php <<'PHP'
+          <?php
+          return [
+            'db'=>['host'=>'127.0.0.1','port'=>'3306','name'=>'topluca_test','user'=>'topluca','pass'=>'topluca_test'],
+            'app'=>['name'=>'TOPLUCA','url'=>'http://127.0.0.1:8080','timezone'=>'Europe/Istanbul','version'=>'5.1.0']
+          ];
+          PHP
+      - name: Critical function smoke test
+        run: |
+          php -r '
+            $_SERVER["SCRIPT_NAME"]="/smoke.php";
+            require "app/bootstrap.php";
+            if(count(main_categories())!==7)throw new RuntimeException("Category helper failed");
+            $p=product_by_slug("navigator-a4-fotokopi-kagidi-80-gr-500-yaprak");
+            if(!$p)throw new RuntimeException("Product lookup failed");
+            if(!is_array(active_banners("home_hero")))throw new RuntimeException("Banner helper failed");
+            if(!content_page_by_slug("hakkimizda"))throw new RuntimeException("Content page helper failed");
+            if(!array_key_exists(active_theme_key(),builtin_themes()))throw new RuntimeException("Theme helper failed");
+            echo "Critical helpers OK\n";
+          '
+      - name: HTTP storefront smoke test
+        run: |
+          php -S 127.0.0.1:8080 -t . > /tmp/topluca-php.log 2>&1 &
+          PID=$!
+          sleep 2
+          set -e
+          curl --fail --silent --show-error http://127.0.0.1:8080/ > /tmp/home.html
+          curl --fail --silent --show-error 'http://127.0.0.1:8080/category.php?slug=kirtasiye' > /tmp/category.html
+          curl --fail --silent --show-error 'http://127.0.0.1:8080/product.php?slug=navigator-a4-fotokopi-kagidi-80-gr-500-yaprak' > /tmp/product.html
+          curl --fail --silent --show-error http://127.0.0.1:8080/cart.php > /tmp/cart.html
+          curl --fail --silent --show-error http://127.0.0.1:8080/webyonet/login.php > /tmp/admin-login.html
+          grep -qi 'TOPLUCA' /tmp/home.html
+          grep -qi 'Kırtasiye' /tmp/category.html
+          grep -qi 'Navigator' /tmp/product.html
+          grep -qi 'Sepet' /tmp/cart.html
+          grep -qi 'WebYönet' /tmp/admin-login.html
+          kill $PID
+          echo 'HTTP smoke tests OK'

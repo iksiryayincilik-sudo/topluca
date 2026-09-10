@@ -1,14 +1,90 @@
 <?php
 require __DIR__.'/app/bootstrap.php';
 $slug=trim($_GET['slug']??'');
-$s=db()->prepare('SELECT * FROM categories WHERE slug=? AND is_active=1');$s->execute([$slug]);$category=$s->fetch();if(!$category){http_response_code(404);exit('Kategori bulunamadı.');}
-$ids=[(int)$category['id']];$q=$ids;while($q){$current=array_shift($q);$c=db()->prepare('SELECT id FROM categories WHERE parent_id=? AND is_active=1');$c->execute([$current]);foreach($c->fetchAll() as $r){$ids[]=(int)$r['id'];$q[]=(int)$r['id'];}}
-$ph=implode(',',array_fill(0,count($ids),'?'));$params=$ids;$where="p.category_id IN ($ph) AND p.is_active=1";
-$brand=(int)($_GET['brand']??0);if($brand){$where.=' AND p.brand_id=?';$params[]=$brand;}if(isset($_GET['stock']))$where.=' AND p.stock>0';if(isset($_GET['free']))$where.=" AND p.shipping_policy='free'";
-$sort=$_GET['sort']??'recommended';$order=match($sort){'price_asc'=>'p.sale_price ASC','price_desc'=>'p.sale_price DESC','new'=>'p.id DESC','sales'=>'p.sales_count DESC',default=>'p.is_featured DESC,p.sales_count DESC,p.id DESC'};
-$s=db()->prepare("SELECT p.*,b.name brand_name,c.name category_name FROM products p LEFT JOIN brands b ON b.id=p.brand_id LEFT JOIN categories c ON c.id=p.category_id WHERE $where ORDER BY $order LIMIT 100");$s->execute($params);$products=$s->fetchAll();
-$brands=db()->query('SELECT * FROM brands WHERE is_active=1 ORDER BY name')->fetchAll();$childrenStmt=db()->prepare('SELECT * FROM categories WHERE parent_id=? AND is_active=1 ORDER BY sort_order,name');$childrenStmt->execute([(int)$category['id']]);$children=$childrenStmt->fetchAll();$pageTitle=$category['name'].' | TOPLUCA';require __DIR__.'/includes/header.php';
+$s=db()->prepare('SELECT * FROM categories WHERE slug=? AND is_active=1');
+$s->execute([$slug]);
+$cat=$s->fetch();
+if(!$cat){http_response_code(404);exit('Kategori bulunamadı.');}
+page_view('category',(int)$cat['id']);
+$ids=category_descendants((int)$cat['id']);
+$ph=implode(',',array_fill(0,count($ids),'?'));
+$params=$ids;
+$where=["p.category_id IN ($ph)",'p.is_active=1'];
+$brand=(int)($_GET['brand']??0);
+$min=$_GET['min']??'';
+$max=$_GET['max']??'';
+$stock=!empty($_GET['stock']);
+$free=!empty($_GET['free']);
+$sort=$_GET['sort']??'popular';
+if($brand){$where[]='p.brand_id=?';$params[]=$brand;}
+if($min!==''){$where[]='p.sale_price>=?';$params[]=(float)$min;}
+if($max!==''){$where[]='p.sale_price<=?';$params[]=(float)$max;}
+if($stock)$where[]='p.stock>0';
+if($free)$where[]="p.shipping_policy='free'";
+$order='p.sales_count DESC,p.is_featured DESC,p.id DESC';
+if($sort==='price_asc')$order='p.sale_price ASC';
+elseif($sort==='price_desc')$order='p.sale_price DESC';
+elseif($sort==='new')$order='p.id DESC';
+$sql="SELECT p.*,b.name brand_name,c.name category_name FROM products p LEFT JOIN brands b ON b.id=p.brand_id LEFT JOIN categories c ON c.id=p.category_id WHERE ".implode(' AND ',$where)." ORDER BY $order LIMIT 200";
+$s=db()->prepare($sql);$s->execute($params);$products=$s->fetchAll();
+$brandSql="SELECT DISTINCT b.* FROM brands b JOIN products p ON p.brand_id=b.id WHERE p.category_id IN ($ph) AND b.is_active=1 ORDER BY b.name";
+$bs=db()->prepare($brandSql);$bs->execute($ids);$brands=$bs->fetchAll();
+$children=category_children((int)$cat['id']);
+$pageTitle=$cat['name'].' | TOPLUCA';
+require __DIR__.'/includes/header.php';
 ?>
-<section class="page-head"><div class="container"><div class="breadcrumb"><a href="<?=url()?>">Ana Sayfa</a><span>›</span><?=h($category['name'])?></div><h1><?=h($category['name'])?></h1><p><?=count($products)?> ürün listeleniyor</p></div></section>
-<section class="section"><div class="container listing"><aside class="filters" data-filter-panel><div class="filter-head"><strong>Filtreler</strong><button type="button" data-filter-close>×</button></div><?php if($children):?><div class="filter-block"><h4>Alt Kategoriler</h4><?php foreach($children as $c):?><a style="display:block;margin:7px 0;font-size:13px" href="<?=url('category.php?slug='.urlencode($c['slug']))?>"><?=h($c['name'])?></a><?php endforeach;?></div><?php endif;?><form><input type="hidden" name="slug" value="<?=h($slug)?>"><div class="filter-block"><h4>Marka</h4><select name="brand"><option value="">Tüm Markalar</option><?php foreach($brands as $b):?><option value="<?=(int)$b['id']?>" <?=$brand===(int)$b['id']?'selected':''?>><?=h($b['name'])?></option><?php endforeach;?></select></div><div class="filter-block"><label><input type="checkbox" name="stock" value="1" <?=isset($_GET['stock'])?'checked':''?>> Sadece stoktakiler</label><label><input type="checkbox" name="free" value="1" <?=isset($_GET['free'])?'checked':''?>> Ücretsiz kargo</label></div><button>Filtreyi Uygula</button></form></aside><div><div class="toolbar"><button class="filter-open" type="button" data-filter-open>☰ Filtrele</button><strong><?=count($products)?> ürün</strong><form><input type="hidden" name="slug" value="<?=h($slug)?>"><select name="sort" onchange="this.form.submit()"><option value="recommended">Önerilen</option><option value="sales" <?=$sort==='sales'?'selected':''?>>En Çok Satan</option><option value="price_asc" <?=$sort==='price_asc'?'selected':''?>>Fiyat Artan</option><option value="price_desc" <?=$sort==='price_desc'?'selected':''?>>Fiyat Azalan</option><option value="new" <?=$sort==='new'?'selected':''?>>Yeni Gelenler</option></select></form></div><div class="products-grid"><?php foreach($products as $p) require __DIR__.'/includes/product-card.php';?></div></div></div></section>
-<?php require __DIR__.'/includes/footer.php';
+<section class="page-hero">
+  <div class="container">
+    <div class="breadcrumbs"><a href="<?=app_url()?>">Ana Sayfa</a><span>›</span><span><?=h($cat['name'])?></span></div>
+    <h1><?=h($cat['name'])?></h1>
+    <p><?=count($products)?> ürün listeleniyor</p>
+  </div>
+</section>
+<section class="section">
+  <div class="container listing-layout">
+    <aside class="filter-panel" data-filter-panel>
+      <button class="filter-close" type="button" data-filter-close>Filtreleri Kapat ×</button>
+      <?php if($children):?>
+      <div class="filter-section"><h4>Alt Kategoriler</h4><?php foreach($children as $ch):?><a href="<?=app_url('category.php?slug='.urlencode($ch['slug']))?>"><?=h($ch['name'])?></a><?php endforeach;?></div>
+      <?php endif;?>
+      <form method="get">
+        <input type="hidden" name="slug" value="<?=h($slug)?>">
+        <div class="filter-section">
+          <h4>Marka</h4>
+          <select name="brand">
+            <option value="0">Tüm Markalar</option>
+            <?php foreach($brands as $b):?><option value="<?=(int)$b['id']?>" <?=$brand===(int)$b['id']?'selected':''?>><?=h($b['name'])?></option><?php endforeach;?>
+          </select>
+        </div>
+        <div class="filter-section">
+          <h4>Fiyat Aralığı</h4>
+          <div class="price-filter">
+            <input type="number" step="0.01" name="min" placeholder="Min" value="<?=h((string)$min)?>">
+            <input type="number" step="0.01" name="max" placeholder="Maks" value="<?=h((string)$max)?>">
+          </div>
+        </div>
+        <div class="filter-section">
+          <label><input type="checkbox" name="stock" value="1" <?=$stock?'checked':''?>> Sadece stoktakiler</label>
+          <label><input type="checkbox" name="free" value="1" <?=$free?'checked':''?>> Ücretsiz kargo</label>
+        </div>
+        <div class="filter-section"><button class="filter-apply">Filtreleri Uygula</button></div>
+      </form>
+    </aside>
+    <div>
+      <div class="toolbar">
+        <div class="toolbar-left"><button class="filter-open" type="button" data-filter-open>☰ Filtrele</button><strong><?=count($products)?> ürün</strong></div>
+        <form method="get">
+          <input type="hidden" name="slug" value="<?=h($slug)?>">
+          <select name="sort" onchange="this.form.submit()">
+            <option value="popular" <?=$sort==='popular'?'selected':''?>>Önerilen sıralama</option>
+            <option value="new" <?=$sort==='new'?'selected':''?>>En yeniler</option>
+            <option value="price_asc" <?=$sort==='price_asc'?'selected':''?>>Fiyat artan</option>
+            <option value="price_desc" <?=$sort==='price_desc'?'selected':''?>>Fiyat azalan</option>
+          </select>
+        </form>
+      </div>
+      <?php if(!$products):?><div class="empty">Filtrelere uygun ürün bulunamadı.</div><?php else:?><div class="products-grid"><?php foreach($products as $p){require __DIR__.'/includes/product-card.php';}?></div><?php endif;?>
+    </div>
+  </div>
+</section>
+<?php require __DIR__.'/includes/footer.php';?>

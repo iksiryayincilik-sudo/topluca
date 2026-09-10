@@ -1,0 +1,5 @@
+User-agent: *
+Disallow: /webyonet/
+Disallow: /app/
+Disallow: /config.php
+Allow: /

@@ -3,12 +3,13 @@ require dirname(__DIR__).'/app/bootstrap.php';
 require_admin();
 require_once __DIR__.'/_helpers.php';
 require_once __DIR__.'/actions_v5.php';
+require_once __DIR__.'/actions_v5_extra.php';
 require_once __DIR__.'/actions_extra.php';
 require_once __DIR__.'/actions.php';
 
 $admin=current_admin();
 $page=$_GET['page']??'dashboard';
-$allowed=['dashboard','orders','order','customers','products','product_edit','categories','brands','stock','purchases','campaigns','banners','themes','shipping','analytics','settings','logs'];
+$allowed=['dashboard','orders','order','customers','products','product_edit','categories','brands','stock','purchases','campaigns','banners','themes','shipping','analytics','search_tools','content','settings','admins','logs'];
 if(!in_array($page,$allowed,true))$page='dashboard';
 $title=wy_page_title($page);
 $nav=wy_nav($page);
@@ -17,11 +18,12 @@ $nav=wy_nav($page);
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow,noarchive">
 <title><?=h($title)?> | TOPLUCA WebYönet</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="<?=app_url('webyonet/admin.css')?>?v=5.0.0">
+<link rel="stylesheet" href="<?=app_url('webyonet/admin.css')?>?v=5.1.0">
 </head>
 <body>
 <div class="admin-layout">
@@ -35,7 +37,7 @@ $nav=wy_nav($page);
     <?php endforeach;?>
   <?php endforeach;?>
   </nav>
-  <div class="admin-sidebar-foot"><span>TOPLUCA V5</span><small><?=h(setting('company_name','Yıldız Ofis Kırtasiye'))?></small></div>
+  <div class="admin-sidebar-foot"><span>TOPLUCA V5.1</span><small><?=h(setting('company_name','Yıldız Ofis Kırtasiye'))?></small></div>
 </aside>
 <div class="sidebar-overlay" id="adminOverlay"></div>
 <div class="admin-main">
@@ -46,10 +48,10 @@ $nav=wy_nav($page);
 <main class="admin-content">
 <?=flash_html()?>
 <?php if((int)$admin['must_change_password']===1):?><div class="admin-alert warning"><b>Başlangıç şifresi kullanılıyor.</b> Güvenlik için Site & SEO Ayarları bölümünden yönetici şifresini değiştirin.</div><?php endif;?>
-<?php $pageFile=__DIR__.'/pages/'.$page.'.php';if(is_file($pageFile))require $pageFile;else echo wy_empty('Sayfa bulunamadı','Bu WebYönet modülü henüz mevcut değil.'); ?>
+<?php $pageFile=__DIR__.'/pages/'.$page.'.php';if(is_file($pageFile))require $pageFile;else echo wy_empty('Sayfa bulunamadı','Bu WebYönet modülü mevcut değil.'); ?>
 </main>
 </div>
 </div>
-<script src="<?=app_url('webyonet/admin.js')?>?v=5.0.0"></script>
+<script src="<?=app_url('webyonet/admin.js')?>?v=5.1.0"></script>
 </body>
 </html>

@@ -1,0 +1,5 @@
+<?php
+$rows=db()->query("SELECT l.*,a.username,a.full_name FROM admin_logs l LEFT JOIN admins a ON a.id=l.admin_id ORDER BY l.id DESC LIMIT 300")->fetchAll();
+?>
+<div class="admin-page-head"><div><span class="eyebrow">SİSTEM</span><h2>İşlem Kayıtları</h2><p>WebYönet üzerinde yapılan kritik değişikliklerin denetim günlüğü.</p></div></div>
+<section class="admin-card"><div class="table-wrap"><table class="admin-table"><thead><tr><th>Tarih</th><th>Yönetici</th><th>İşlem</th><th>Tür</th><th>Kayıt</th><th>Detay</th><th>IP</th></tr></thead><tbody><?php if(!$rows):?><tr><td colspan="7"><?=wy_empty('İşlem kaydı yok','WebYönet değişiklikleri burada tutulur.')?></td></tr><?php endif;?><?php foreach($rows as $r):?><tr><td><?=h(date('d.m.Y H:i:s',strtotime($r['created_at'])))?></td><td><?=h($r['full_name']?:$r['username'])?></td><td><b><?=h($r['action_name'])?></b></td><td><?=h($r['entity_type'])?></td><td><?=h($r['entity_id'])?></td><td><?=h($r['details'])?></td><td><?=h($r['ip_address'])?></td></tr><?php endforeach;?></tbody></table></div></section>

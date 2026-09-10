@@ -8,7 +8,7 @@ function banner_slots(): array{
         'home_mid_left'=>['label'=>'Orta Alan Sol','desktop'=>'690 × 250 px','mobile'=>'720 × 300 px','ratio'=>'69:25'],
         'home_mid_right'=>['label'=>'Orta Alan Sağ','desktop'=>'690 × 250 px','mobile'=>'720 × 300 px','ratio'=>'69:25'],
         'category_top'=>['label'=>'Kategori Üst Banner','desktop'=>'1440 × 260 px','mobile'=>'768 × 520 px','ratio'=>'72:13'],
-        'brand_top'=>['label'=>'Marka Üst Banner','desktop'=>'1440 × 260 px','mobile'=>'768 × 520 px','ratio'=>'72:13'],
+        'brand_top'=>['label'=>'Marka Üst Banner','desktop'=>'1440 × 260 px','mobile'=>'768 × 520 px','ratio'=>'72:13']
     ];
 }
 
@@ -19,7 +19,7 @@ function builtin_themes(): array{
         'summer'=>['name'=>'Yaz','description'=>'Sıcak ve ferah yaz vurguları.','icon'=>'☀'],
         'ramadan'=>['name'=>'Ramazan / Bayram','description'=>'Altın tonlu, sade hilal ve ışık vurguları.','icon'=>'☾'],
         'republic'=>['name'=>'Cumhuriyet','description'=>'Kırmızı-beyaz, ölçülü 29 Ekim teması.','icon'=>'★'],
-        'school'=>['name'=>'Okula Dönüş','description'=>'Eğitim dönemi için canlı fakat kurumsal tema.','icon'=>'✎'],
+        'school'=>['name'=>'Okula Dönüş','description'=>'Eğitim dönemi için canlı fakat kurumsal tema.','icon'=>'✎']
     ];
 }
 
@@ -27,10 +27,12 @@ function active_theme_key(): string{
     static $theme=null;
     if($theme!==null)return $theme;
     $manual=(string)setting('active_theme','standard');
-    try{
-        $row=db()->query("SELECT theme_key FROM theme_schedules WHERE is_active=1 AND start_at<=NOW() AND end_at>=NOW() ORDER BY priority DESC,id DESC LIMIT 1")->fetch();
-        if($row&&isset($row['theme_key']))$manual=(string)$row['theme_key'];
-    }catch(Throwable $e){}
+    if(setting('theme_auto_schedule','1')==='1'){
+        try{
+            $row=db()->query("SELECT theme_key FROM theme_schedules WHERE is_active=1 AND start_at<=NOW() AND end_at>=NOW() ORDER BY priority DESC,id DESC LIMIT 1")->fetch();
+            if($row&&isset($row['theme_key']))$manual=(string)$row['theme_key'];
+        }catch(Throwable $e){}
+    }
     $all=builtin_themes();
     $theme=array_key_exists($manual,$all)?$manual:'standard';
     return $theme;
@@ -63,12 +65,19 @@ function active_banners(string $position): array{
     return $s->fetchAll();
 }
 
+function banner_style(array $banner): string{
+    $overlay=trim((string)($banner['overlay_color']??'#000000'))?:'#000000';
+    $opacity=max(0,min(.85,(float)($banner['overlay_opacity']??.2)));
+    return '--banner-overlay:'.$overlay.';--banner-opacity:'.$opacity.';--banner-color:'.($banner['text_color']??'#fff').';';
+}
+
 function active_home_sections(): array{
     try{return db()->query("SELECT * FROM homepage_sections WHERE is_active=1 ORDER BY sort_order,id")->fetchAll();}
     catch(Throwable $e){return [];}
 }
 
 function current_theme_schedule(): ?array{
+    if(setting('theme_auto_schedule','1')!=='1')return null;
     try{$r=db()->query("SELECT * FROM theme_schedules WHERE is_active=1 AND start_at<=NOW() AND end_at>=NOW() ORDER BY priority DESC,id DESC LIMIT 1")->fetch();return $r?:null;}
     catch(Throwable $e){return null;}
 }

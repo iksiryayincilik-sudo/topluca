@@ -37,7 +37,6 @@ function active_theme_key(): string{
     $theme=array_key_exists($manual,$all)?$manual:'standard';
     return $theme;
 }
-
 function theme_body_class(): string{return 'theme-'.active_theme_key();}
 
 function site_logo_url(): string{
@@ -47,42 +46,37 @@ function site_logo_url(): string{
     if(is_file($png))return app_url('assets/img/topluca_logo.png');
     return app_url('assets/img/topluca-logo.svg');
 }
-
 function site_favicon_url(): ?string{
     $stored=trim((string)setting('site_favicon',''));
     if($stored!==''&&is_file(dirname(__DIR__).'/'.$stored))return app_url($stored);
     return null;
 }
-
-function seo_value(string $key,string $fallback=''): string{
-    $v=trim((string)setting($key,''));
-    return $v!==''?$v:$fallback;
-}
+function seo_value(string $key,string $fallback=''): string{$v=trim((string)setting($key,''));return $v!==''?$v:$fallback;}
 
 function active_banners(string $position): array{
     $s=db()->prepare("SELECT * FROM banners WHERE position_code=? AND is_active=1 AND (start_at IS NULL OR start_at<=NOW()) AND (end_at IS NULL OR end_at>=NOW()) ORDER BY sort_order,id");
-    $s->execute([$position]);
-    return $s->fetchAll();
+    $s->execute([$position]);return $s->fetchAll();
 }
-
-function active_home_sections(): array{
-    try{return db()->query("SELECT * FROM homepage_sections WHERE is_active=1 ORDER BY sort_order,id")->fetchAll();}
-    catch(Throwable $e){return [];}
-}
-
-function current_theme_schedule(): ?array{
-    if(setting('theme_auto_schedule','1')!=='1')return null;
-    try{$r=db()->query("SELECT * FROM theme_schedules WHERE is_active=1 AND start_at<=NOW() AND end_at>=NOW() ORDER BY priority DESC,id DESC LIMIT 1")->fetch();return $r?:null;}
-    catch(Throwable $e){return null;}
-}
-
-function content_page_by_slug(string $slug): ?array{
-    try{$s=db()->prepare('SELECT * FROM content_pages WHERE slug=? AND is_active=1 LIMIT 1');$s->execute([$slug]);$r=$s->fetch();return $r?:null;}
-    catch(Throwable $e){return null;}
-}
+function active_home_sections(): array{try{return db()->query("SELECT * FROM homepage_sections WHERE is_active=1 ORDER BY sort_order,id")->fetchAll();}catch(Throwable $e){return [];}}
+function current_theme_schedule(): ?array{if(setting('theme_auto_schedule','1')!=='1')return null;try{$r=db()->query("SELECT * FROM theme_schedules WHERE is_active=1 AND start_at<=NOW() AND end_at>=NOW() ORDER BY priority DESC,id DESC LIMIT 1")->fetch();return $r?:null;}catch(Throwable $e){return null;}}
+function content_page_by_slug(string $slug): ?array{try{$s=db()->prepare('SELECT * FROM content_pages WHERE slug=? AND is_active=1 LIMIT 1');$s->execute([$slug]);$r=$s->fetch();return $r?:null;}catch(Throwable $e){return null;}}
 
 function theme_inline_vars(): string{
     $accent=trim((string)setting('theme_accent_color',''));
     if($accent!==''&&preg_match('/^#[0-9a-fA-F]{6}$/',$accent))return '--orange:'.$accent.';';
     return '';
+}
+
+function banner_style(array $banner): string{
+    $text=trim((string)($banner['text_color']??'#ffffff'));if(!preg_match('/^#[0-9a-fA-F]{6}$/',$text))$text='#ffffff';
+    $overlay=trim((string)($banner['overlay_color']??'#000000'));if(!preg_match('/^#[0-9a-fA-F]{6}$/',$overlay))$overlay='#000000';
+    $opacity=max(0,min(.85,(float)($banner['overlay_opacity']??.20)));
+    return '--banner-text:'.$text.';--banner-overlay:'.$overlay.';--banner-opacity:'.$opacity.';';
+}
+
+function storefront_link(?string $url,string $fallback='#'): string{
+    $url=trim((string)$url);if($url==='')return $fallback;
+    if(preg_match('~^https?://~i',$url))return $url;
+    if(strpos($url,'#')===0)return $url;
+    return app_url($url);
 }

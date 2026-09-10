@@ -1,0 +1,12 @@
+<?php
+require __DIR__.'/app/bootstrap.php';
+$pageTitle='TOPLUCA | İhtiyacın olan ne varsa, Topluca';
+$cats=categories();
+$products=db()->query("SELECT p.*,b.name brand_name,c.name category_name FROM products p LEFT JOIN brands b ON b.id=p.brand_id LEFT JOIN categories c ON c.id=p.category_id WHERE p.is_active=1 ORDER BY p.is_featured DESC,p.sales_count DESC,p.id DESC LIMIT 10")->fetchAll();
+require __DIR__.'/includes/header.php';
+?>
+<section class="hero"><div class="container hero-inner"><div class="hero-copy"><small>TOPLUCA.NET</small><h1>ARADIĞINIZ<br>HER ŞEY<br><span>TOPLUCA'DA!</span></h1><p>Kırtasiyeden kitaba, bilgisayar ürünlerinden ofis ihtiyaçlarına kadar binlerce ürün için sıcak, hızlı ve düzenli alışveriş deneyimi.</p><a class="cta" href="#urunler">Alışverişe Başla →</a></div><div class="hero-side"><div class="hero-box"><strong>🚚 Ankara'da Aynı Gün</strong><span><?=h((string)setting('same_day_cutoff','15:00'))?>'a kadar uygun siparişler</span></div><div class="hero-box"><strong>📦 Geniş Ürün Yelpazesi</strong><span>İş, okul ve günlük ihtiyaçlar tek sepette</span></div><div class="hero-box"><strong>🔐 Güvenli Alışveriş</strong><span>Güvenli oturum ve modern altyapı</span></div></div></div></section>
+<section class="section"><div class="container"><div class="section-title"><div><small>KATEGORİLER</small><h2>Ne arıyorsanız burada</h2></div></div><div class="category-grid"><?php $icons=['✏️','📚','🖥️','🖨️','📄','🎒','🎨']; foreach($cats as $i=>$cat):?><a class="category-card" href="<?=url('category.php?slug='.urlencode($cat['slug']))?>"><div class="icon"><?=$icons[$i]??'📦'?></div><strong><?=h($cat['name'])?></strong><span>Ürünleri İncele →</span></a><?php endforeach;?></div></div></section>
+<section class="section light"><div class="container promo-grid"><a class="promo orange" href="<?=url('category.php?slug=kitap')?>"><small>TOPLUCA FIRSATLARI</small><h3>Kitaplarda<br>Avantajlı Fiyatlar</h3><strong>Şimdi İncele →</strong></a><a class="promo dark" href="<?=url('category.php?slug=bilgisayar-sarf-malzemeleri')?>"><small>TEKNOLOJİ</small><h3>Bilgisayar &<br>Aksesuar Fırsatları</h3><strong>Şimdi Keşfet →</strong></a></div></section>
+<section id="urunler" class="section"><div class="container"><div class="section-title"><div><small>ÖNE ÇIKANLAR</small><h2>Çok Satanlar</h2></div><a href="<?=url('search.php?q=')?>">Tüm Ürünler →</a></div><div class="products-grid"><?php foreach($products as $p) require __DIR__.'/includes/product-card.php';?></div></div></section>
+<?php require __DIR__.'/includes/footer.php';

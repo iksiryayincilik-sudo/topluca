@@ -1,0 +1,17 @@
+<?php
+require __DIR__.'/app/bootstrap.php';
+if($_SERVER['REQUEST_METHOD']==='POST'){
+    csrf_check();$action=$_POST['action']??'';$cid=cart_id();
+    if($action==='add'){
+        $pid=(int)($_POST['product_id']??0);$qty=max(1,min(99,(int)($_POST['quantity']??1)));
+        $s=db()->prepare('SELECT id,stock FROM products WHERE id=? AND is_active=1');$s->execute([$pid]);$p=$s->fetch();
+        if($p&&$p['stock']>0){$s=db()->prepare('SELECT id,quantity FROM cart_items WHERE cart_id=? AND product_id=?');$s->execute([$cid,$pid]);$e=$s->fetch();if($e){$n=min((int)$p['stock'],(int)$e['quantity']+$qty);db()->prepare('UPDATE cart_items SET quantity=?,updated_at=NOW() WHERE id=?')->execute([$n,$e['id']]);}else{db()->prepare('INSERT INTO cart_items(cart_id,product_id,quantity,created_at,updated_at) VALUES(?,?,?,NOW(),NOW())')->execute([$cid,$pid,min($qty,(int)$p['stock'])]);}flash('success','Ürün sepetinize eklendi.');}
+    }
+    if($action==='update'){
+        foreach($_POST['qty']??[] as $id=>$qty){$qty=max(0,min(99,(int)$qty));if($qty===0)db()->prepare('DELETE FROM cart_items WHERE id=? AND cart_id=?')->execute([(int)$id,$cid]);else db()->prepare('UPDATE cart_items SET quantity=?,updated_at=NOW() WHERE id=? AND cart_id=?')->execute([$qty,(int)$id,$cid]);}
+        flash('success','Sepet güncellendi.');
+    }
+    $sum=cart_subtotal();db()->prepare('UPDATE carts SET subtotal=?,updated_at=NOW() WHERE id=?')->execute([$sum,$cid]);redirect('cart.php');
+}
+$items=cart_items();$subtotal=cart_subtotal();$freeLimit=(float)setting('free_shipping_limit',500);$allFree=$items?true:false;foreach($items as $i)if($i['shipping_policy']!=='free')$allFree=false;$ship=($allFree||$subtotal>=$freeLimit)?0:(float)db()->query('SELECT price FROM shipping_companies WHERE is_active=1 ORDER BY price LIMIT 1')->fetchColumn();$pageTitle='Sepetim | TOPLUCA';require __DIR__.'/includes/header.php';
+?><section class="page-head"><div class="container"><h1>Sepetim</h1><p><?=cart_count()?> ürün</p></div></section><section class="section"><div class="container cart-layout"><div><?php if(!$items):?><div class="summary"><h3>Sepetiniz boş.</h3><a class="checkout" href="<?=url()?>">Alışverişe Başla</a></div><?php else:?><form method="post"><?=csrf_field()?><input type="hidden" name="action" value="update"><div class="cart-items"><?php foreach($items as $i):?><div class="cart-item"><div><a href="<?=url('product.php?slug='.urlencode($i['slug']))?>"><strong><?=h($i['name'])?></strong></a><small><?=h($i['brand_name'])?></small></div><span><?=money($i['sale_price'])?></span><input type="number" min="0" max="99" name="qty[<?=(int)$i['cart_item_id']?>]" value="<?=(int)$i['quantity']?>"><strong><?=money($i['line_total'])?></strong></div><?php endforeach;?></div><button class="add-cart" style="width:auto;margin-top:15px">Sepeti Güncelle</button></form><?php endif;?></div><?php if($items):?><aside class="summary"><h3>Sipariş Özeti</h3><div><span>Ürünler</span><strong><?=money($subtotal)?></strong></div><div><span>Kargo</span><strong><?=$ship<=0?'Ücretsiz':money($ship)?></strong></div><hr><div class="total"><span>Toplam</span><strong><?=money($subtotal+$ship)?></strong></div><?php if($subtotal<$freeLimit):?><div class="notice">🚚 <?=money($freeLimit-$subtotal)?> daha ekleyin, standart kargonuz ücretsiz olsun.</div><?php endif;?><a class="checkout" href="<?=url('checkout.php')?>">Siparişi Tamamla →</a></aside><?php endif;?></div></section><?php require __DIR__.'/includes/footer.php';

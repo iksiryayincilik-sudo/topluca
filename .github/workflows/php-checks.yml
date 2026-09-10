@@ -1,0 +1,58 @@
+name: TOPLUCA PHP 8.0 checks
+
+on:
+  push:
+    branches: [ "v4-professional" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  php-checks:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: topluca_test
+          MYSQL_USER: topluca
+          MYSQL_PASSWORD: topluca_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.0'
+          extensions: pdo_mysql, mbstring, fileinfo, iconv
+          coverage: none
+      - name: PHP syntax lint
+        run: |
+          find . -type f -name '*.php' -not -path './config.php' -print0 | xargs -0 -n1 php -l
+      - name: MySQL schema and seed smoke test
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_NAME: topluca_test
+          DB_USER: topluca
+          DB_PASS: topluca_test
+        run: |
+          php -r '
+            require "database/schema.php";
+            $pdo=new PDO("mysql:host=".getenv("DB_HOST").";port=".getenv("DB_PORT").";dbname=".getenv("DB_NAME").";charset=utf8mb4",getenv("DB_USER"),getenv("DB_PASS"),[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION]);
+            drop_topluca_tables($pdo);
+            foreach(schema_sql() as $sql){$pdo->exec($sql);}
+            seed_v4($pdo);
+            $tables=["admins","users","categories","brands","products","orders","order_items","shipping_companies","banners","homepage_sections"];
+            foreach($tables as $table){$c=(int)$pdo->query("SELECT COUNT(*) FROM `{$table}`")->fetchColumn(); echo $table.":".$c.PHP_EOL;}
+            if((int)$pdo->query("SELECT COUNT(*) FROM products")->fetchColumn()<7){throw new RuntimeException("Demo products missing");}
+            if((int)$pdo->query("SELECT COUNT(*) FROM categories WHERE parent_id IS NULL")->fetchColumn()!=7){throw new RuntimeException("Main categories invalid");}
+            $hash=$pdo->query("SELECT password_hash FROM admins WHERE username=\"emrah\"")->fetchColumn();
+            if(!$hash || !password_verify("emr321456",$hash)){throw new RuntimeException("Admin seed invalid");}
+          '

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 150" role="img" aria-label="TOPLUCA">
+  <defs><style>.w{font-family:Arial Black,Arial,sans-serif;font-weight:900;fill:#090909}</style></defs>
+  <text x="12" y="103" class="w" font-size="91">T</text>
+  <g transform="translate(88 18)">
+    <circle cx="59" cy="60" r="48" fill="#ff5a00"/>
+    <circle cx="59" cy="60" r="28" fill="white"/>
+    <path d="M47 5h24v45l-12 9-12-9z" fill="#ff5a00"/>
+  </g>
+  <text x="177" y="103" class="w" font-size="91">PLUC</text>
+  <g transform="translate(505 20)">
+    <path d="M63 0 123 99H91L78 75H45L32 99H0L59 0z" fill="#090909"/>
+    <path d="M25 76c32 18 66 18 104 2" fill="none" stroke="#ff5a00" stroke-width="13" stroke-linecap="round"/>
+    <path d="M118 62l31 7-21 24z" fill="#ff5a00"/>
+  </g>
+</svg>
